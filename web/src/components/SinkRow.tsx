@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 
 export interface SinkSummary {
-  type: 'smtp' | 'resend' | 'ntfy'
+  type: 'smtp' | 'resend' | 'ntfy' | 'discord_webhook'
   id: string
   label: string
   incomplete: boolean
@@ -24,6 +24,9 @@ export interface SinkSummary {
   default_priority?: number
   default_tags?: string | null
   include_link?: boolean
+  // discord_webhook
+  avatar_url?: string | null
+  use_embeds?: boolean
 }
 
 export function SinkRow({ sink }: { sink: SinkSummary }) {
@@ -34,12 +37,14 @@ export function SinkRow({ sink }: { sink: SinkSummary }) {
   const [testBusy, setTestBusy] = useState(false)
 
   const isNtfy = sink.type === 'ntfy'
+  const isDiscord = sink.type === 'discord_webhook'
+  const noDestination = isNtfy || isDiscord
 
   async function sendTest() {
     setTestBusy(true)
     setTestMsg(null)
     try {
-      const body = isNtfy ? {} : { to: testTo }
+      const body = noDestination ? {} : { to: testTo }
       const res = await fetch(`/api/sinks/${sink.type}/${sink.id}/test`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -84,6 +89,14 @@ export function SinkRow({ sink }: { sink: SinkSummary }) {
                 {sink.default_tags && ` · tags: ${sink.default_tags}`}
               </>
             )}
+            {sink.type === 'discord_webhook' && (
+              <>
+                Discord webhook
+                {sink.username && ` · as "${sink.username}"`}
+                {sink.use_embeds ? ' · embeds' : ' · plain text'}
+                {sink.has_secret && ' · URL set'}
+              </>
+            )}
           </div>
         </div>
         <div className="flex shrink-0 gap-2">
@@ -100,7 +113,7 @@ export function SinkRow({ sink }: { sink: SinkSummary }) {
       </div>
       {testOpen && (
         <div className="border-t border-zinc-800 px-3 py-3 space-y-2">
-          {!isNtfy && (
+          {!noDestination && (
             <label className="block text-xs">
               <span className="text-zinc-400">Send a test email to:</span>
               <input
@@ -119,13 +132,18 @@ export function SinkRow({ sink }: { sink: SinkSummary }) {
               Make sure you&apos;re subscribed to the topic in the ntfy app.
             </p>
           )}
+          {isDiscord && (
+            <p className="text-xs text-zinc-500">
+              A test message will be posted to the configured Discord webhook.
+            </p>
+          )}
           <div className="flex items-center gap-2">
             <button
               onClick={sendTest}
-              disabled={testBusy || (!isNtfy && !testTo) || sink.incomplete}
+              disabled={testBusy || (!noDestination && !testTo) || sink.incomplete}
               className="rounded bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-900 hover:bg-white disabled:opacity-40"
             >
-              {testBusy ? 'Sending…' : isNtfy ? 'Send test push' : 'Send test email'}
+              {testBusy ? 'Sending…' : isNtfy ? 'Send test push' : isDiscord ? 'Send test message' : 'Send test email'}
             </button>
             {sink.incomplete && <span className="text-xs text-amber-400">complete the sink first</span>}
             {testMsg && <span className={`text-xs ${testMsg.ok ? 'text-emerald-300' : 'text-red-400'}`}>{testMsg.text}</span>}

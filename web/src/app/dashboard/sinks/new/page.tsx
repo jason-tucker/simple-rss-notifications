@@ -14,9 +14,10 @@ export default async function NewSinkPage({
   if (!session) redirect('/login')
 
   const params = await searchParams
-  const type: 'smtp' | 'resend' | 'ntfy' =
+  const type: 'smtp' | 'resend' | 'ntfy' | 'discord_webhook' =
     params.type === 'resend' ? 'resend'
     : params.type === 'ntfy' ? 'ntfy'
+    : params.type === 'discord_webhook' ? 'discord_webhook'
     : 'smtp'
 
   return (

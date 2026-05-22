@@ -5,6 +5,32 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.8.0] — 2026-05-22 — PR8: Routes overhaul + Discord webhook sink
+
+### Changed — route model (breaking, auto-migrated)
+- **A route is now `feed + label + N destinations`.** Previously each route was 1:1 (feed × sink × destination). The new shape: `routes(id, user_id, feed_id, label, enabled)` + `route_destinations(id, route_id, sink_type, sink_id, destination, enabled, …)`. Each destination delivers independently; per-destination state and per-destination toggles.
+- **Migration 0008** moves existing routes data into the new shape inside the same transaction that drops the old columns — live deployments transition without data loss. New unique key on `dispatches(route_destination_id, feed_item_id)` replaces the old `(route_id, feed_item_id)`.
+- **`dispatches` gains `route_destination_id`** (NOT NULL after backfill); `route_id` stays as a denormalized convenience. Foreign keys cascade so deleting a destination also drops its dispatch history.
+- **RLS** (migration 0009): `route_destinations` policy joins through `routes` for ownership; `sinks_discord_webhook` has its own user_id policy.
+
+### Added — Discord webhook sink
+- **`sinks_discord_webhook`** table — encrypted webhook URL at rest (4-tuple AEAD same as the other sinks), optional `username` / `avatar_url` display overrides, `use_embeds` boolean for embed vs plain-text rendering.
+- **`lib/discord/webhook.ts`** — POST to the webhook URL with rich embed (title + description + URL) or plain `content`. SSRF guard on every call, errors never include the URL verbatim. `?wait=true` so the response carries the posted message id for audit.
+- **API**: `/api/sinks` discriminated union accepts `type: 'discord_webhook'`; `/api/sinks/discord_webhook/[id]` PATCH/DELETE/test all wired. Webhook URL validated to start with `https://discord.com/api/webhooks/` (or canary/ptb variant).
+- **UI**: `+ Discord` button on the sinks list, full Discord form in `SinkForm` (webhook URL, display name override, avatar URL, embed toggle), `SinkRow` summary shows `Discord webhook · as "Foo" · embeds`.
+- **Worker dispatcher** learns the Discord branch; 4xx errors are permanent, 5xx + network retry with the standard backoff ladder.
+- **Test button** posts a real message to the configured webhook.
+
+### Added — new routes UI
+- **`/dashboard/routes`** lists each route as a card with destination chips (`SMTP · IONOS → tucker@…`, `NTFY · phone`, `DISCORD · server alerts`).
+- **`/dashboard/routes/new`** form has a destinations fieldset with `+ Add destination` to stack as many as you want. Email destinations require an address; ntfy/discord destinations show "delivers to the sink's configured target" instead.
+- **`/dashboard/routes/[id]`** edit page lets you rename the route + toggle / save / remove each destination individually, plus add new ones inline.
+- **New API endpoints**: `/api/routes/[id]/destinations` POST + `/api/routes/[id]/destinations/[destId]` PATCH/DELETE.
+
+### Notes
+- Worker poller now enqueues one dispatch per `(item × route_destination)` instead of `(item × route)`. Existing dispatch rows were backfilled with their derived `route_destination_id` so no in-flight work is lost.
+- Old `NewRouteForm` and `RouteRow` components removed (replaced by `RouteForm`, `EditRouteForm`, `RouteCard`).
+
 ## [0.7.1] — 2026-05-22
 
 ### Fixed

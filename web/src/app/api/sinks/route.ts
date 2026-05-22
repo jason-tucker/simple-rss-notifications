@@ -24,20 +24,27 @@ export const dynamic = 'force-dynamic'
  */
 
 interface ListedSink {
-  type: 'smtp' | 'resend' | 'ntfy'
+  type: 'smtp' | 'resend' | 'ntfy' | 'discord_webhook'
   id: string
   label: string
+  // email
   from_email?: string
   from_name?: string | null
+  // smtp
   host?: string
   port?: number
   username?: string
   use_tls?: boolean
+  // ntfy
   server_url?: string
   topic?: string
   default_priority?: number
   default_tags?: string | null
   include_link?: boolean
+  // discord_webhook
+  avatar_url?: string | null
+  use_embeds?: boolean
+  // (username is shared with smtp but means a different thing here — Discord display name)
   incomplete: boolean
   has_secret: boolean
   created_at: string
@@ -81,6 +88,16 @@ export async function GET() {
              created_at, updated_at
       FROM sinks_ntfy ORDER BY created_at
     `)
+    const discord = await tx.execute<{
+      id: string; label: string; username: string | null; avatar_url: string | null
+      use_embeds: boolean; incomplete: boolean; has_secret: boolean
+      created_at: Date; updated_at: Date
+    }>(sql`
+      SELECT id, label, username, avatar_url, use_embeds, incomplete,
+             (webhook_url_ciphertext IS NOT NULL) AS has_secret,
+             created_at, updated_at
+      FROM sinks_discord_webhook ORDER BY created_at
+    `)
     const out: ListedSink[] = [
       ...smtp.map((s) => ({
         type: 'smtp' as const,
@@ -104,6 +121,15 @@ export async function GET() {
         server_url: s.server_url, topic: s.topic,
         default_priority: s.default_priority, default_tags: s.default_tags,
         include_link: s.include_link,
+        incomplete: s.incomplete, has_secret: s.has_secret,
+        created_at: new Date(s.created_at).toISOString(),
+        updated_at: new Date(s.updated_at).toISOString(),
+      })),
+      ...discord.map((s) => ({
+        type: 'discord_webhook' as const,
+        id: s.id, label: s.label,
+        username: s.username ?? undefined,
+        avatar_url: s.avatar_url, use_embeds: s.use_embeds,
         incomplete: s.incomplete, has_secret: s.has_secret,
         created_at: new Date(s.created_at).toISOString(),
         updated_at: new Date(s.updated_at).toISOString(),
@@ -144,7 +170,22 @@ const NtfyBody = z.object({
   include_link: z.boolean().default(true),
 })
 
-const Body = z.discriminatedUnion('type', [SmtpBody, ResendBody, NtfyBody])
+const DiscordWebhookBody = z.object({
+  type: z.literal('discord_webhook'),
+  label: z.string().min(1).max(100),
+  webhook_url: z
+    .string()
+    .url()
+    .max(2048)
+    .regex(/^https:\/\/(discord\.com|ptb\.discord\.com|canary\.discord\.com|discordapp\.com)\/api\/webhooks\//,
+      'webhook URL must be a discord.com/api/webhooks/... link')
+    .optional(),
+  username: z.string().max(80).optional().nullable(),
+  avatar_url: z.string().url().max(2048).optional().nullable(),
+  use_embeds: z.boolean().default(true),
+})
+
+const Body = z.discriminatedUnion('type', [SmtpBody, ResendBody, NtfyBody, DiscordWebhookBody])
 
 export async function POST(req: NextRequest) {
   if (!isSameOrigin(req)) return NextResponse.json({ error: 'forbidden', code: 'csrf' }, { status: 403 })
@@ -223,18 +264,46 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, id, type: 'resend' })
     }
 
-    // type === 'ntfy'
-    const enc = parsed.data.token ? encrypt(parsed.data.token) : null
+    if (parsed.data.type === 'ntfy') {
+      const enc = parsed.data.token ? encrypt(parsed.data.token) : null
+      const rows = await tx.execute<{ id: string }>(sql`
+        INSERT INTO sinks_ntfy (
+          user_id, label, server_url, topic,
+          token_ciphertext, token_iv, token_tag, token_key_version,
+          default_priority, default_tags, include_link, incomplete
+        )
+        VALUES (
+          ${session.uid}::uuid, ${parsed.data.label}, ${parsed.data.server_url}, ${parsed.data.topic},
+          ${enc?.ciphertext ?? null}, ${enc?.iv ?? null}, ${enc?.tag ?? null}, ${enc?.keyVersion ?? null},
+          ${parsed.data.default_priority}, ${parsed.data.default_tags ?? null}, ${parsed.data.include_link}, false
+        )
+        RETURNING id
+      `)
+      const id = rows[0]!.id
+      void writeAudit({
+        actor_user_id: session.uid,
+        action: 'sink.create',
+        target_type: 'sink_ntfy',
+        target_id: id,
+        after: redactSecretFields(parsed.data, ['token']),
+        via: 'web',
+        ip,
+      })
+      return NextResponse.json({ ok: true, id, type: 'ntfy' })
+    }
+
+    // type === 'discord_webhook'
+    const enc = parsed.data.webhook_url ? encrypt(parsed.data.webhook_url) : null
     const rows = await tx.execute<{ id: string }>(sql`
-      INSERT INTO sinks_ntfy (
-        user_id, label, server_url, topic,
-        token_ciphertext, token_iv, token_tag, token_key_version,
-        default_priority, default_tags, include_link, incomplete
+      INSERT INTO sinks_discord_webhook (
+        user_id, label,
+        webhook_url_ciphertext, webhook_url_iv, webhook_url_tag, webhook_url_key_version,
+        username, avatar_url, use_embeds, incomplete
       )
       VALUES (
-        ${session.uid}::uuid, ${parsed.data.label}, ${parsed.data.server_url}, ${parsed.data.topic},
+        ${session.uid}::uuid, ${parsed.data.label},
         ${enc?.ciphertext ?? null}, ${enc?.iv ?? null}, ${enc?.tag ?? null}, ${enc?.keyVersion ?? null},
-        ${parsed.data.default_priority}, ${parsed.data.default_tags ?? null}, ${parsed.data.include_link}, false
+        ${parsed.data.username ?? null}, ${parsed.data.avatar_url ?? null}, ${parsed.data.use_embeds}, ${!enc}
       )
       RETURNING id
     `)
@@ -242,12 +311,12 @@ export async function POST(req: NextRequest) {
     void writeAudit({
       actor_user_id: session.uid,
       action: 'sink.create',
-      target_type: 'sink_ntfy',
+      target_type: 'sink_discord_webhook',
       target_id: id,
-      after: redactSecretFields(parsed.data, ['token']),
+      after: redactSecretFields(parsed.data, ['webhook_url']),
       via: 'web',
       ip,
     })
-    return NextResponse.json({ ok: true, id, type: 'ntfy' })
+    return NextResponse.json({ ok: true, id, type: 'discord_webhook' })
   })
 }

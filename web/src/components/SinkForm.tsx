@@ -22,11 +22,15 @@ export interface SinkInitial {
   default_priority?: number
   default_tags?: string | null
   include_link?: boolean
+  // discord_webhook only (note `username` is shared but means a different
+  // thing — Discord display name override)
+  avatar_url?: string | null
+  use_embeds?: boolean
 }
 
 interface Props {
   mode: 'new' | 'edit'
-  type: 'smtp' | 'resend' | 'ntfy'
+  type: 'smtp' | 'resend' | 'ntfy' | 'discord_webhook'
   initial?: SinkInitial
 }
 
@@ -58,6 +62,12 @@ export function SinkForm({ mode, type, initial }: Props) {
   const [tags, setTags] = useState(initial?.default_tags ?? '')
   const [includeLink, setIncludeLink] = useState<boolean>(initial?.include_link ?? true)
 
+  // Discord webhook
+  const [webhookUrl, setWebhookUrl] = useState('')
+  const [discordUsername, setDiscordUsername] = useState(initial?.username ?? '')
+  const [avatarUrl, setAvatarUrl] = useState(initial?.avatar_url ?? '')
+  const [useEmbeds, setUseEmbeds] = useState<boolean>(initial?.use_embeds ?? true)
+
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -82,13 +92,19 @@ export function SinkForm({ mode, type, initial }: Props) {
         body.from_email = fromEmail
         body.from_name = fromName.trim() || null
         if (apiKey) body.api_key = apiKey
-      } else {
+      } else if (type === 'ntfy') {
         body.server_url = serverUrl
         body.topic = topic
         body.default_priority = Number(priority)
         body.default_tags = tags.trim() || null
         body.include_link = includeLink
         if (token) body.token = token
+      } else {
+        // discord_webhook
+        body.username = discordUsername.trim() || null
+        body.avatar_url = avatarUrl.trim() || null
+        body.use_embeds = useEmbeds
+        if (webhookUrl) body.webhook_url = webhookUrl
       }
       const res = await fetch(url, {
         method,
@@ -173,6 +189,31 @@ export function SinkForm({ mode, type, initial }: Props) {
             Encrypted at rest. {isEdit && initial?.has_secret ? 'Leave blank to keep the current key.' : 'Required.'}
           </span>
         </label>
+      )}
+
+      {type === 'discord_webhook' && (
+        <>
+          <label className="block">
+            <span className="text-sm text-zinc-400">Webhook URL</span>
+            <input type="password" autoComplete="new-password" value={webhookUrl} onChange={(e) => setWebhookUrl(e.target.value)} placeholder={requiredSecretPlaceholder} className={inputCls} />
+            <span className="mt-1 block text-xs text-zinc-500">
+              Encrypted at rest. Get from Discord channel settings → Integrations → Webhooks → Copy URL. Must start with <code className="text-zinc-300">https://discord.com/api/webhooks/</code>.
+              {isEdit && initial?.has_secret ? ' Leave blank to keep current.' : ''}
+            </span>
+          </label>
+          <label className="block">
+            <span className="text-sm text-zinc-400">Display name <span className="text-zinc-600">(optional override)</span></span>
+            <input maxLength={80} value={discordUsername} onChange={(e) => setDiscordUsername(e.target.value)} className={inputCls} placeholder="Euphoric Notify" />
+          </label>
+          <label className="block">
+            <span className="text-sm text-zinc-400">Avatar URL <span className="text-zinc-600">(optional override)</span></span>
+            <input type="url" maxLength={2048} value={avatarUrl} onChange={(e) => setAvatarUrl(e.target.value)} className={inputCls} placeholder="https://…/logo.png" />
+          </label>
+          <label className="flex items-center gap-2 text-sm text-zinc-400">
+            <input type="checkbox" checked={useEmbeds} onChange={(e) => setUseEmbeds(e.target.checked)} />
+            Send as rich embed (title + description + URL). Uncheck for plain text.
+          </label>
+        </>
       )}
 
       {type === 'ntfy' && (

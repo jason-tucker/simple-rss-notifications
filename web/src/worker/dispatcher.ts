@@ -2,7 +2,8 @@ import { sql } from 'drizzle-orm'
 import { db } from '@/lib/db/client'
 import { sendViaSmtp, sendViaResend } from '@/lib/email/send'
 import { publishToNtfy } from '@/lib/ntfy/publish'
-import type { SinkSmtp, SinkResend, SinkNtfy } from '@/lib/db/schema'
+import { publishToDiscord } from '@/lib/discord/webhook'
+import type { SinkSmtp, SinkResend, SinkNtfy, SinkDiscordWebhook } from '@/lib/db/schema'
 
 type Logger = (msg: string, extra?: Record<string, unknown>) => void
 
@@ -25,7 +26,9 @@ export async function dispatchOnePending(log: Logger): Promise<boolean> {
   // Pick + claim one in a single statement so we can't double-dispatch
   // if/when we add a second worker. UPDATE … RETURNING acts as the lock.
   const claimed = await db.execute<{
-    dispatch_id: string; route_id: string; feed_item_id: string
+    dispatch_id: string
+    route_destination_id: string
+    feed_item_id: string
     sink_type: string; sink_id: string; destination: string | null
     item_title: string | null; item_link: string | null; item_summary: string | null
     item_published_at: Date | null
@@ -41,14 +44,14 @@ export async function dispatchOnePending(log: Logger): Promise<boolean> {
     bumped AS (
       UPDATE dispatches SET attempts = attempts + 1, dispatched_at = now()
       WHERE id = (SELECT id FROM picked)
-      RETURNING id, route_id, feed_item_id, attempts
+      RETURNING id, route_destination_id, feed_item_id, attempts
     )
-    SELECT b.id AS dispatch_id, b.route_id, b.feed_item_id, b.attempts,
-           r.sink_type, r.sink_id, r.destination,
+    SELECT b.id AS dispatch_id, b.route_destination_id, b.feed_item_id, b.attempts,
+           rd.sink_type, rd.sink_id, rd.destination,
            fi.title AS item_title, fi.link AS item_link, fi.summary AS item_summary, fi.published_at AS item_published_at,
            f.label AS feed_label
     FROM bumped b
-    JOIN routes r ON r.id = b.route_id
+    JOIN route_destinations rd ON rd.id = b.route_destination_id
     JOIN feed_items fi ON fi.id = b.feed_item_id
     JOIN feeds f ON f.id = fi.feed_id
   `)
@@ -56,7 +59,7 @@ export async function dispatchOnePending(log: Logger): Promise<boolean> {
   if (!job) return false
 
   // Load the sink. RLS isn't in our way (we're the table owner here).
-  let sink: SinkSmtp | SinkResend | SinkNtfy | undefined
+  let sink: SinkSmtp | SinkResend | SinkNtfy | SinkDiscordWebhook | undefined
   if (job.sink_type === 'smtp') {
     const rows = await db.execute<SinkSmtp>(sql`SELECT * FROM sinks_smtp WHERE id = ${job.sink_id}::uuid LIMIT 1`)
     sink = rows[0]
@@ -65,6 +68,9 @@ export async function dispatchOnePending(log: Logger): Promise<boolean> {
     sink = rows[0]
   } else if (job.sink_type === 'ntfy') {
     const rows = await db.execute<SinkNtfy>(sql`SELECT * FROM sinks_ntfy WHERE id = ${job.sink_id}::uuid LIMIT 1`)
+    sink = rows[0]
+  } else if (job.sink_type === 'discord_webhook') {
+    const rows = await db.execute<SinkDiscordWebhook>(sql`SELECT * FROM sinks_discord_webhook WHERE id = ${job.sink_id}::uuid LIMIT 1`)
     sink = rows[0]
   }
 
@@ -113,7 +119,7 @@ export async function dispatchOnePending(log: Logger): Promise<boolean> {
       text,
       idempotencyKey: `srn-${job.dispatch_id}`,
     })
-  } else {
+  } else if (job.sink_type === 'ntfy') {
     // ntfy — no `destination`; the sink itself carries server_url + topic.
     const ntfySink = sink as SinkNtfy
     // Trim summary to keep the push body readable on a phone.
@@ -122,6 +128,16 @@ export async function dispatchOnePending(log: Logger): Promise<boolean> {
       title: job.item_title ?? job.feed_label,
       message,
       click: ntfySink.include_link && link ? link : undefined,
+      idempotencyKey: `srn-${job.dispatch_id}`,
+    })
+  } else {
+    // discord_webhook — sink owns the webhook URL.
+    const discordSink = sink as SinkDiscordWebhook
+    const message = summary || link || '(no body)'
+    result = await publishToDiscord(discordSink, {
+      title: job.item_title ?? job.feed_label,
+      message,
+      link: link || undefined,
       idempotencyKey: `srn-${job.dispatch_id}`,
     })
   }
@@ -197,5 +213,6 @@ function isPermanentFailure(code?: string): boolean {
   if (code === 'EAUTH' || code === 'EENVELOPE') return true
   if (code.startsWith('resend-http-4')) return true
   if (code.startsWith('ntfy-http-4')) return true
+  if (code.startsWith('discord-http-4')) return true
   return false
 }

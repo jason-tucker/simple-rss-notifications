@@ -3,7 +3,7 @@ import Link from 'next/link'
 import { sql } from 'drizzle-orm'
 import { readSessionCookie } from '@/lib/auth/session'
 import { withUser } from '@/lib/db/withUser'
-import { NewRouteForm } from '@/components/NewRouteForm'
+import { RouteForm } from '@/components/RouteForm'
 
 export const dynamic = 'force-dynamic'
 
@@ -24,18 +24,22 @@ export default async function NewRoutePage() {
     const ntfy = await tx.execute<{ id: string; label: string; incomplete: boolean; topic: string }>(sql`
       SELECT id, label, incomplete, topic FROM sinks_ntfy ORDER BY label
     `)
+    const discord = await tx.execute<{ id: string; label: string; incomplete: boolean }>(sql`
+      SELECT id, label, incomplete FROM sinks_discord_webhook ORDER BY label
+    `)
     return {
       feeds,
       sinks: [
         ...smtp.map((s) => ({ ...s, type: 'smtp' as const, topic: null as string | null })),
         ...resend.map((s) => ({ ...s, type: 'resend' as const, topic: null as string | null })),
         ...ntfy.map((s) => ({ ...s, type: 'ntfy' as const })),
+        ...discord.map((s) => ({ ...s, type: 'discord_webhook' as const, topic: null as string | null })),
       ],
     }
   })
 
   return (
-    <div className="max-w-xl mx-auto space-y-6">
+    <div className="max-w-2xl mx-auto space-y-6">
       <header>
         <h1 className="text-2xl font-semibold">New route</h1>
         <p className="mt-1 text-sm text-zinc-500">
@@ -49,7 +53,7 @@ export default async function NewRoutePage() {
           {sinks.length === 0 && (<>You need at least one <Link href="/dashboard/sinks/new?type=smtp" className="underline">sink</Link>.</>)}
         </div>
       ) : (
-        <NewRouteForm feeds={feeds} sinks={sinks} />
+        <RouteForm mode="new" feeds={feeds} sinks={sinks} />
       )}
     </div>
   )

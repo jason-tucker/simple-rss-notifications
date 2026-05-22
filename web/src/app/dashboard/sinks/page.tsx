@@ -38,10 +38,19 @@ export default async function SinksPage() {
              incomplete, (token_ciphertext IS NOT NULL) AS has_secret
       FROM sinks_ntfy ORDER BY created_at
     `)
+    const discord = await tx.execute<{
+      id: string; label: string; username: string | null; avatar_url: string | null
+      use_embeds: boolean; incomplete: boolean; has_secret: boolean
+    }>(sql`
+      SELECT id, label, username, avatar_url, use_embeds, incomplete,
+             (webhook_url_ciphertext IS NOT NULL) AS has_secret
+      FROM sinks_discord_webhook ORDER BY created_at
+    `)
     return [
       ...smtp.map((s) => ({ type: 'smtp' as const, ...s })),
       ...resend.map((s) => ({ type: 'resend' as const, ...s })),
       ...ntfy.map((s) => ({ type: 'ntfy' as const, ...s })),
+      ...discord.map((s) => ({ type: 'discord_webhook' as const, ...s, username: s.username ?? undefined })),
     ]
   })
 
@@ -55,6 +64,7 @@ export default async function SinksPage() {
           <Link href="/dashboard/sinks/new?type=smtp" className="rounded border border-zinc-700 px-3 py-1.5 text-sm hover:bg-zinc-800">+ SMTP</Link>
           <Link href="/dashboard/sinks/new?type=resend" className="rounded border border-zinc-700 px-3 py-1.5 text-sm hover:bg-zinc-800">+ Resend</Link>
           <Link href="/dashboard/sinks/new?type=ntfy" className="rounded border border-zinc-700 px-3 py-1.5 text-sm hover:bg-zinc-800">+ ntfy</Link>
+          <Link href="/dashboard/sinks/new?type=discord_webhook" className="rounded border border-zinc-700 px-3 py-1.5 text-sm hover:bg-zinc-800">+ Discord</Link>
         </div>
       </header>
 
