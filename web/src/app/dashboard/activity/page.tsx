@@ -21,8 +21,20 @@ export default async function ActivityPage({
   const status = params.status && VALID_STATUS.has(params.status) ? params.status : null
   const feedFilter = params.feed && /^[0-9a-f-]{36}$/.test(params.feed) ? params.feed : null
 
+  interface RawRow {
+    id: string; status: string; attempts: number
+    scheduled_at: Date; dispatched_at: Date | null
+    error: string | null; provider_message_id: string | null
+    created_at: Date
+    route_id: string; route_label: string | null
+    feed_id: string; feed_label: string
+    item_title: string | null; item_link: string | null; item_published_at: Date | null
+    sink_type: string; sink_id: string; destination: string | null
+    sink_label: string | null
+  }
+
   const { rows, total, feeds, counts } = await withUser(session.uid, async (tx) => {
-    const rows = await tx.execute<ActivityRow & { dispatched_at: Date | null; scheduled_at: Date; item_published_at: Date | null; created_at: Date }>(sql`
+    const rows = await tx.execute<RawRow>(sql`
       SELECT d.id, d.status, d.attempts, d.scheduled_at, d.dispatched_at,
              d.error, d.provider_message_id, d.created_at,
              r.id AS route_id, r.label AS route_label,
@@ -89,7 +101,7 @@ export default async function ActivityPage({
         <FeedFilterForm feeds={feeds} current={feedFilter ?? ''} status={status} />
       </div>
 
-      <ActivityList rows={rows.map(stringifyDates) as ActivityRow[]} total={total} />
+      <ActivityList rows={rows.map(toActivityRow)} total={total} />
 
       <p className="text-xs text-zinc-600">
         <Link href="/" className="hover:text-zinc-400">← back to dashboard</Link>
@@ -122,13 +134,37 @@ function FeedFilterForm({ feeds, current, status }: { feeds: Array<{ id: string;
   )
 }
 
-// Server-component query returns Date objects; the client component
-// wants strings to keep the network payload + serialization simple.
-function stringifyDates<T extends { dispatched_at?: Date | null; scheduled_at?: Date; item_published_at?: Date | null; created_at?: Date }>(row: T): T & { dispatched_at: string | null; scheduled_at: string; created_at: string } {
+// Server-component query returns Date objects; the client component wants
+// ISO strings so it can pass through Next's RSC serialization cleanly.
+function toActivityRow(r: {
+  id: string; status: string; attempts: number
+  scheduled_at: Date; dispatched_at: Date | null
+  error: string | null; provider_message_id: string | null
+  created_at: Date
+  route_id: string; route_label: string | null
+  feed_id: string; feed_label: string
+  item_title: string | null; item_link: string | null
+  sink_type: string; sink_id: string; destination: string | null
+  sink_label: string | null
+}): ActivityRow {
   return {
-    ...row,
-    dispatched_at: row.dispatched_at ? new Date(row.dispatched_at).toISOString() : null,
-    scheduled_at: row.scheduled_at ? new Date(row.scheduled_at).toISOString() : new Date().toISOString(),
-    created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
-  } as T & { dispatched_at: string | null; scheduled_at: string; created_at: string }
+    id: r.id,
+    status: r.status,
+    attempts: r.attempts,
+    scheduled_at: new Date(r.scheduled_at).toISOString(),
+    dispatched_at: r.dispatched_at ? new Date(r.dispatched_at).toISOString() : null,
+    error: r.error,
+    provider_message_id: r.provider_message_id,
+    created_at: new Date(r.created_at).toISOString(),
+    route_id: r.route_id,
+    route_label: r.route_label,
+    feed_id: r.feed_id,
+    feed_label: r.feed_label,
+    item_title: r.item_title,
+    item_link: r.item_link,
+    sink_type: r.sink_type,
+    sink_id: r.sink_id,
+    destination: r.destination,
+    sink_label: r.sink_label,
+  }
 }
