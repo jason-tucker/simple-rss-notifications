@@ -5,6 +5,11 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.7.1] — 2026-05-22
+
+### Fixed
+- Logo image broken on the login page (and any other unauth surface). The auth middleware was redirecting `/logo.png` → `/login` because only `/favicon.ico` and `/_next/*` were whitelisted; the Next image optimizer then fetched `/logo.png` internally, got an HTML redirect, and returned 400. Extended the middleware with a static-asset extension allowlist (`.png .jpe?g .svg .gif .ico .webp .avif .css .js .map .woff2? .ttf .otf .txt .xml .webmanifest`). The favicon worked all along because it's served from `app/icon.png` via Next's own metadata routes under `/_next/*`.
+
 ## [0.7.0] — 2026-05-22 — PR7: Euphoric Notify rebrand
 
 ### Added
