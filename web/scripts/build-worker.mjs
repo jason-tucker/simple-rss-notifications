@@ -24,13 +24,15 @@ await build({
   },
   // Externals:
   //   @node-rs/argon2 — Rust native binding, can't be bundled
-  //   server-only     — Next.js marker package that some shared modules import
-  //                     to refuse client-side bundling. In the worker we're
-  //                     always server-side, so the marker is meaningless,
-  //                     but esbuild still needs to resolve the import.
-  //                     Letting Node resolve it from the standalone's
-  //                     traced node_modules at runtime is the simple fix.
-  external: ['@node-rs/argon2', 'server-only'],
+  external: ['@node-rs/argon2'],
+  // Several shared lib files import 'server-only' to refuse client-side
+  // bundling in Next. The worker bundle is always server-side, so the
+  // marker is meaningless here. Aliasing to a stub avoids the runtime
+  // resolution problem (Next's standalone trace doesn't copy server-only
+  // into the runtime image) and avoids needing it as a real dep.
+  alias: {
+    'server-only': './scripts/server-only-stub.mjs',
+  },
   tsconfig: 'tsconfig.json',
   logLevel: 'info',
 })

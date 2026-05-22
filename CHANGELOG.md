@@ -5,10 +5,15 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
-## [0.5.1] — 2026-05-22
+## [0.5.2] — 2026-05-22
 
 ### Fixed
-- Worker container crash-looped on `ERR_MODULE_NOT_FOUND: server-only`. The `server-only` import in shared lib files is marked external in the worker bundle (the marker is meaningless when bundling for the always-server worker), but Next's standalone trace doesn't include the `server-only` package at runtime because nothing in the Next runtime path actually needs it. Adding `server-only` as an explicit dep so the standalone tracer picks it up and copies it into the runtime image.
+- Real fix for the worker's `ERR_MODULE_NOT_FOUND: server-only` crash-loop. v0.5.1 added it as a dep, but Next's standalone tracer still doesn't include it in the runtime image (the package isn't reachable from any code Next itself runs). Switched to esbuild `alias` mapping `server-only` to a tiny local noop stub. The marker remains in source for Next's own bundling, the worker bundle has no reference to the real package at runtime, and there's no runtime dep to ship.
+
+## [0.5.1] — 2026-05-22
+
+### Attempted (did not fix)
+- Worker container crash-looped on `ERR_MODULE_NOT_FOUND: server-only`. The `server-only` import in shared lib files is marked external in the worker bundle (the marker is meaningless when bundling for the always-server worker), but Next's standalone trace doesn't include the `server-only` package at runtime because nothing in the Next runtime path actually needs it. Tried adding `server-only` as an explicit dep — did NOT work because the standalone tracer only copies packages reachable from Next's own runtime path. Real fix in 0.5.2.
 
 ## [0.5.0] — 2026-05-22 — PR5: Feeds + RSS poller + dispatcher
 
