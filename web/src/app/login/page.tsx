@@ -1,9 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter()
   const params = useSearchParams()
   const next = params.get('next') ?? '/'
@@ -43,41 +43,50 @@ export default function LoginPage() {
   }
 
   return (
+    <form onSubmit={submit} className="space-y-3">
+      <label className="block">
+        <span className="text-sm text-zinc-400">Username</span>
+        <input
+          type="text"
+          autoComplete="username"
+          required
+          autoFocus
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none focus:border-zinc-500"
+        />
+      </label>
+      <label className="block">
+        <span className="text-sm text-zinc-400">Password</span>
+        <input
+          type="password"
+          autoComplete="current-password"
+          required
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none focus:border-zinc-500"
+        />
+      </label>
+      {error && <p className="text-sm text-red-400">{error}</p>}
+      <button
+        type="submit"
+        disabled={busy}
+        className="w-full rounded bg-zinc-100 px-3 py-2 font-medium text-zinc-900 disabled:opacity-50 hover:bg-white"
+      >
+        {busy ? 'Signing in…' : 'Sign in'}
+      </button>
+    </form>
+  )
+}
+
+export default function LoginPage() {
+  return (
     <div className="max-w-sm mx-auto space-y-6">
       <h1 className="text-2xl font-semibold">Log in</h1>
-      <form onSubmit={submit} className="space-y-3">
-        <label className="block">
-          <span className="text-sm text-zinc-400">Username</span>
-          <input
-            type="text"
-            autoComplete="username"
-            required
-            autoFocus
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none focus:border-zinc-500"
-          />
-        </label>
-        <label className="block">
-          <span className="text-sm text-zinc-400">Password</span>
-          <input
-            type="password"
-            autoComplete="current-password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none focus:border-zinc-500"
-          />
-        </label>
-        {error && <p className="text-sm text-red-400">{error}</p>}
-        <button
-          type="submit"
-          disabled={busy}
-          className="w-full rounded bg-zinc-100 px-3 py-2 font-medium text-zinc-900 disabled:opacity-50 hover:bg-white"
-        >
-          {busy ? 'Signing in…' : 'Sign in'}
-        </button>
-      </form>
+      {/* Suspense required around useSearchParams() in Next 15 so prerender doesn't bail. */}
+      <Suspense fallback={<div className="text-sm text-zinc-500">Loading…</div>}>
+        <LoginForm />
+      </Suspense>
     </div>
   )
 }
