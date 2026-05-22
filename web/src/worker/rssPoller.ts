@@ -105,16 +105,15 @@ async function pollFeed(feed: FeedRow, log: Logger): Promise<void> {
     : newItems
 
   if (itemsToDispatch.length > 0) {
-    const routes = await db.execute<{ id: string; sink_type: string; sink_id: string; destination: string }>(sql`
-      SELECT id, sink_type, sink_id, destination
-      FROM routes
-      WHERE feed_id = ${feed.id}::uuid AND enabled
+    // Fan out: join routes → route_destinations, both must be enabled.
+    const destRows = await db.execute<{ route_id: string; destination_id: string }>(sql`
+      SELECT r.id AS route_id, rd.id AS destination_id
+      FROM routes r
+      JOIN route_destinations rd ON rd.route_id = r.id
+      WHERE r.feed_id = ${feed.id}::uuid AND r.enabled AND rd.enabled
     `)
 
-    if (routes.length > 0) {
-      // Schedule each (route, item) dispatch. Backfill pacing spreads
-      // them over time — first item at scheduled_at=now, second at
-      // now + pace, etc.
+    if (destRows.length > 0) {
       const pace = isFirstPoll && feed.backfill_pace_seconds > 0 ? feed.backfill_pace_seconds : 0
       // newest-first in the items array; reverse so oldest goes out first
       // (more natural reading order on a backfill blast).
@@ -127,10 +126,10 @@ async function pollFeed(feed: FeedRow, log: Logger): Promise<void> {
       const dispatchValues: SQL[] = []
       let idx = 0
       for (const item of ordered) {
-        for (const route of routes) {
+        for (const d of destRows) {
           const offsetSec = pace * idx
           dispatchValues.push(sql`(
-            ${route.id}::uuid, ${item.id}::uuid, ${feed.user_id}::uuid,
+            ${d.destination_id}::uuid, ${d.route_id}::uuid, ${item.id}::uuid, ${feed.user_id}::uuid,
             'pending', 0, now() + (${offsetSec}::int * interval '1 second')
           )`)
         }
@@ -139,9 +138,9 @@ async function pollFeed(feed: FeedRow, log: Logger): Promise<void> {
 
       if (dispatchValues.length > 0) {
         await db.execute(sql`
-          INSERT INTO dispatches (route_id, feed_item_id, user_id, status, attempts, scheduled_at)
+          INSERT INTO dispatches (route_destination_id, route_id, feed_item_id, user_id, status, attempts, scheduled_at)
           VALUES ${sql.join(dispatchValues, sql`, `)}
-          ON CONFLICT (route_id, feed_item_id) DO NOTHING
+          ON CONFLICT (route_destination_id, feed_item_id) DO NOTHING
         `)
       }
     }

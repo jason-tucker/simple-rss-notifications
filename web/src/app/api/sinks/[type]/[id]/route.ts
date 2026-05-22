@@ -12,7 +12,7 @@ import { checkSafeOutboundUrl } from '@/lib/ssrf'
 
 export const dynamic = 'force-dynamic'
 
-const TypeParam = z.enum(['smtp', 'resend', 'ntfy'])
+const TypeParam = z.enum(['smtp', 'resend', 'ntfy', 'discord_webhook'])
 
 const SmtpPatch = z.object({
   label: z.string().min(1).max(100).optional(),
@@ -40,6 +40,20 @@ const NtfyPatch = z.object({
   default_priority: z.number().int().min(1).max(5).optional(),
   default_tags: z.string().max(200).nullable().optional(),
   include_link: z.boolean().optional(),
+})
+
+const DiscordPatch = z.object({
+  label: z.string().min(1).max(100).optional(),
+  webhook_url: z
+    .string()
+    .url()
+    .max(2048)
+    .regex(/^https:\/\/(discord\.com|ptb\.discord\.com|canary\.discord\.com|discordapp\.com)\/api\/webhooks\//,
+      'webhook URL must be a discord.com/api/webhooks/... link')
+    .optional(),
+  username: z.string().max(80).nullable().optional(),
+  avatar_url: z.string().url().max(2048).nullable().optional(),
+  use_embeds: z.boolean().optional(),
 })
 
 type Params = { type: string; id: string }
@@ -116,37 +130,67 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<Params> }) 
     })
   }
 
-  // type === 'ntfy'
-  const parsed = NtfyPatch.safeParse(json)
-  if (!parsed.success) return NextResponse.json({ error: 'bad-request', issues: parsed.error.issues }, { status: 400 })
+  if (typeResult.data === 'ntfy') {
+    const parsed = NtfyPatch.safeParse(json)
+    if (!parsed.success) return NextResponse.json({ error: 'bad-request', issues: parsed.error.issues }, { status: 400 })
 
-  if (parsed.data.server_url) {
-    const ssrf = await checkSafeOutboundUrl(parsed.data.server_url)
-    if (ssrf) return NextResponse.json({ error: ssrf, code: 'ssrf-blocked' }, { status: 400 })
+    if (parsed.data.server_url) {
+      const ssrf = await checkSafeOutboundUrl(parsed.data.server_url)
+      if (ssrf) return NextResponse.json({ error: ssrf, code: 'ssrf-blocked' }, { status: 400 })
+    }
+
+    return withUser(session.uid, async (tx) => {
+      const enc = parsed.data.token && parsed.data.token.length > 0 ? encrypt(parsed.data.token) : null
+      const rows = await tx.execute<{ id: string }>(sql`
+        UPDATE sinks_ntfy SET
+          label            = COALESCE(${parsed.data.label ?? null},            label),
+          server_url       = COALESCE(${parsed.data.server_url ?? null},       server_url),
+          topic            = COALESCE(${parsed.data.topic ?? null},            topic),
+          default_priority = COALESCE(${parsed.data.default_priority ?? null}, default_priority),
+          default_tags     = ${parsed.data.default_tags === undefined ? sql`default_tags` : sql`${parsed.data.default_tags}`},
+          include_link     = COALESCE(${parsed.data.include_link ?? null},     include_link),
+          token_ciphertext  = COALESCE(${enc?.ciphertext ?? null},  token_ciphertext),
+          token_iv          = COALESCE(${enc?.iv ?? null},          token_iv),
+          token_tag         = COALESCE(${enc?.tag ?? null},         token_tag),
+          token_key_version = COALESCE(${enc?.keyVersion ?? null},  token_key_version),
+          updated_at = now()
+        WHERE id = ${id}::uuid
+        RETURNING id
+      `)
+      if (!rows[0]) return NextResponse.json({ error: 'not-found' }, { status: 404 })
+      void writeAudit({
+        actor_user_id: session.uid, action: 'sink.update', target_type: 'sink_ntfy', target_id: id,
+        after: redactSecretFields(parsed.data, ['token']), via: 'web', ip,
+      })
+      return NextResponse.json({ ok: true })
+    })
   }
 
+  // type === 'discord_webhook'
+  const parsed = DiscordPatch.safeParse(json)
+  if (!parsed.success) return NextResponse.json({ error: 'bad-request', issues: parsed.error.issues }, { status: 400 })
+
   return withUser(session.uid, async (tx) => {
-    const enc = parsed.data.token && parsed.data.token.length > 0 ? encrypt(parsed.data.token) : null
+    const enc = parsed.data.webhook_url && parsed.data.webhook_url.length > 0 ? encrypt(parsed.data.webhook_url) : null
     const rows = await tx.execute<{ id: string }>(sql`
-      UPDATE sinks_ntfy SET
-        label            = COALESCE(${parsed.data.label ?? null},            label),
-        server_url       = COALESCE(${parsed.data.server_url ?? null},       server_url),
-        topic            = COALESCE(${parsed.data.topic ?? null},            topic),
-        default_priority = COALESCE(${parsed.data.default_priority ?? null}, default_priority),
-        default_tags     = ${parsed.data.default_tags === undefined ? sql`default_tags` : sql`${parsed.data.default_tags}`},
-        include_link     = COALESCE(${parsed.data.include_link ?? null},     include_link),
-        token_ciphertext  = COALESCE(${enc?.ciphertext ?? null},  token_ciphertext),
-        token_iv          = COALESCE(${enc?.iv ?? null},          token_iv),
-        token_tag         = COALESCE(${enc?.tag ?? null},         token_tag),
-        token_key_version = COALESCE(${enc?.keyVersion ?? null},  token_key_version),
+      UPDATE sinks_discord_webhook SET
+        label        = COALESCE(${parsed.data.label ?? null},        label),
+        username     = ${parsed.data.username === undefined ? sql`username` : sql`${parsed.data.username}`},
+        avatar_url   = ${parsed.data.avatar_url === undefined ? sql`avatar_url` : sql`${parsed.data.avatar_url}`},
+        use_embeds   = COALESCE(${parsed.data.use_embeds ?? null},   use_embeds),
+        webhook_url_ciphertext  = COALESCE(${enc?.ciphertext ?? null},  webhook_url_ciphertext),
+        webhook_url_iv          = COALESCE(${enc?.iv ?? null},          webhook_url_iv),
+        webhook_url_tag         = COALESCE(${enc?.tag ?? null},         webhook_url_tag),
+        webhook_url_key_version = COALESCE(${enc?.keyVersion ?? null},  webhook_url_key_version),
+        incomplete   = CASE WHEN ${enc !== null} OR webhook_url_ciphertext IS NOT NULL THEN false ELSE incomplete END,
         updated_at = now()
       WHERE id = ${id}::uuid
       RETURNING id
     `)
     if (!rows[0]) return NextResponse.json({ error: 'not-found' }, { status: 404 })
     void writeAudit({
-      actor_user_id: session.uid, action: 'sink.update', target_type: 'sink_ntfy', target_id: id,
-      after: redactSecretFields(parsed.data, ['token']), via: 'web', ip,
+      actor_user_id: session.uid, action: 'sink.update', target_type: 'sink_discord_webhook', target_id: id,
+      after: redactSecretFields(parsed.data, ['webhook_url']), via: 'web', ip,
     })
     return NextResponse.json({ ok: true })
   })
@@ -164,7 +208,8 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<Params> })
   const ip = clientIp(req)
   const table = typeResult.data === 'smtp' ? sql`sinks_smtp`
               : typeResult.data === 'resend' ? sql`sinks_resend`
-              : sql`sinks_ntfy`
+              : typeResult.data === 'ntfy' ? sql`sinks_ntfy`
+              : sql`sinks_discord_webhook`
   return withUser(session.uid, async (tx) => {
     const rows = await tx.execute<{ id: string }>(sql`DELETE FROM ${table} WHERE id = ${id}::uuid RETURNING id`)
     if (!rows[0]) return NextResponse.json({ error: 'not-found' }, { status: 404 })
@@ -173,7 +218,8 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<Params> })
       action: 'sink.delete',
       target_type: typeResult.data === 'smtp' ? 'sink_smtp'
                  : typeResult.data === 'resend' ? 'sink_resend'
-                 : 'sink_ntfy',
+                 : typeResult.data === 'ntfy' ? 'sink_ntfy'
+                 : 'sink_discord_webhook',
       target_id: id,
       via: 'web',
       ip,

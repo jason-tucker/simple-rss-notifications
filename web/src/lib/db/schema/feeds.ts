@@ -81,21 +81,17 @@ export const feed_items = pgTable(
   }),
 )
 
+/**
+ * A route is now a NAMED grouping: one feed → N destinations.
+ * Destinations live in `route_destinations`. Old fields (sink_type/sink_id/
+ * destination) were moved there by migration 0008.
+ */
 export const routes = pgTable(
   'routes',
   {
     id: uuid('id').primaryKey().defaultRandom(),
     user_id: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     feed_id: uuid('feed_id').notNull().references(() => feeds.id, { onDelete: 'cascade' }),
-    /** Sink type discriminator: 'smtp' | 'resend' | 'ntfy'. */
-    sink_type: text('sink_type').notNull(),
-    sink_id: uuid('sink_id').notNull(),
-    /**
-     * Per-route override of where the sink delivers. NULL for ntfy
-     * (sink.topic is the destination); required email address for SMTP
-     * and Resend. API validation enforces this discrimination.
-     */
-    destination: text('destination'),
     label: text('label'),
     enabled: boolean('enabled').notNull().default(true),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -107,17 +103,52 @@ export const routes = pgTable(
   }),
 )
 
+/**
+ * One row per (route × destination). A route can fan out to many sinks
+ * of different types — each gets its own dispatch row downstream so it
+ * can succeed or fail independently.
+ *
+ * `destination` is the per-row delivery address. Required for email
+ * sinks (SMTP/Resend); NULL for ntfy and discord_webhook where the
+ * delivery address is on the sink itself. API validation enforces it.
+ *
+ * `enabled` is per-destination so you can mute one sink without
+ * deleting it.
+ */
+export const route_destinations = pgTable(
+  'route_destinations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    route_id: uuid('route_id').notNull().references(() => routes.id, { onDelete: 'cascade' }),
+    sink_type: text('sink_type').notNull(),
+    sink_id: uuid('sink_id').notNull(),
+    destination: text('destination'),
+    enabled: boolean('enabled').notNull().default(true),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    route_idx: index('route_destinations_route_idx').on(t.route_id, t.enabled),
+  }),
+)
+
 export const dispatches = pgTable(
   'dispatches',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    /**
+     * Each dispatch is per (route_destination, feed_item) — one row per
+     * downstream send. Route_id is kept as a denormalized convenience
+     * (joins to the parent route without going through route_destinations)
+     * but route_destination_id is the foreign key that drives RLS scope
+     * and uniqueness.
+     */
+    route_destination_id: uuid('route_destination_id').notNull().references(() => route_destinations.id, { onDelete: 'cascade' }),
     route_id: uuid('route_id').notNull().references(() => routes.id, { onDelete: 'cascade' }),
     feed_item_id: uuid('feed_item_id').notNull().references(() => feed_items.id, { onDelete: 'cascade' }),
     user_id: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-    /** State machine: 'pending' → 'sent' | 'failed' | 'skipped'. */
     status: text('status').notNull().default('pending'),
     attempts: integer('attempts').notNull().default(0),
-    /** Scheduled send time. Equals fetched_at for immediate; later for paced backfill. */
     scheduled_at: timestamp('scheduled_at', { withTimezone: true }).notNull().defaultNow(),
     dispatched_at: timestamp('dispatched_at', { withTimezone: true }),
     error: text('error'),
@@ -125,10 +156,9 @@ export const dispatches = pgTable(
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
-    // One row per (route, feed_item) — prevents the dispatcher from re-sending
-    // an item to the same destination twice.
-    route_item_unique: uniqueIndex('dispatches_route_item_unique').on(t.route_id, t.feed_item_id),
-    // Index the poller uses to find work: WHERE status='pending' AND scheduled_at <= now()
+    // One row per (destination, feed_item) — prevents the dispatcher
+    // from re-sending an item to the same destination twice.
+    dest_item_unique: uniqueIndex('dispatches_dest_item_unique').on(t.route_destination_id, t.feed_item_id),
     pending_idx: index('dispatches_pending_idx').on(t.status, t.scheduled_at),
   }),
 )

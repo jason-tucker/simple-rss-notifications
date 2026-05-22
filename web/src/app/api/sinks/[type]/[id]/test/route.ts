@@ -7,12 +7,13 @@ import { readSessionCookie } from '@/lib/auth/session'
 import { isSameOrigin } from '@/lib/auth/csrf'
 import { sendViaSmtp, sendViaResend } from '@/lib/email/send'
 import { publishToNtfy } from '@/lib/ntfy/publish'
+import { publishToDiscord } from '@/lib/discord/webhook'
 import { writeAudit } from '@/lib/audit'
 import { rateLimit, clientIp } from '@/lib/ratelimit'
 
 export const dynamic = 'force-dynamic'
 
-const TypeParam = z.enum(['smtp', 'resend', 'ntfy'])
+const TypeParam = z.enum(['smtp', 'resend', 'ntfy', 'discord_webhook'])
 
 const EmailBody = z.object({
   to: z.string().email(),
@@ -20,6 +21,10 @@ const EmailBody = z.object({
 })
 
 const NtfyTestBody = z.object({
+  message: z.string().min(1).max(2000).optional(),
+})
+
+const DiscordTestBody = z.object({
   message: z.string().min(1).max(2000).optional(),
 })
 
@@ -55,14 +60,15 @@ export async function POST(req: NextRequest, ctx: { params: Promise<Params> }) {
   const sink = await withUser(session.uid, async (tx) => {
     const table = typeResult.data === 'smtp' ? sql`sinks_smtp`
                 : typeResult.data === 'resend' ? sql`sinks_resend`
-                : sql`sinks_ntfy`
+                : typeResult.data === 'ntfy' ? sql`sinks_ntfy`
+                : sql`sinks_discord_webhook`
     const rows = await tx.execute(sql`SELECT * FROM ${table} WHERE id = ${id}::uuid LIMIT 1`)
     return rows[0] ?? null
   })
   if (!sink) return NextResponse.json({ error: 'not-found' }, { status: 404 })
 
-  const subject = `simple-rss-notifications: test message`
-  const text = `This is a test message from your simple-rss-notifications instance.\n\nIf you received this, the sink is configured correctly.\n\n— sent at ${new Date().toISOString()}`
+  const subject = `Euphoric Notify: test message`
+  const text = `This is a test message from your Euphoric Notify instance.\n\nIf you received this, the sink is configured correctly.\n\n— sent at ${new Date().toISOString()}`
 
   let result
   let auditAfter: Record<string, unknown>
@@ -73,6 +79,13 @@ export async function POST(req: NextRequest, ctx: { params: Promise<Params> }) {
     const message = parsed.data.message ?? text
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     result = await publishToNtfy(sink as any, { title: 'Test message', message })
+    auditAfter = { ok: result.ok, code: result.code, error: result.error }
+  } else if (typeResult.data === 'discord_webhook') {
+    const parsed = DiscordTestBody.safeParse(json ?? {})
+    if (!parsed.success) return NextResponse.json({ error: 'bad-request', issues: parsed.error.issues }, { status: 400 })
+    const message = parsed.data.message ?? text
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    result = await publishToDiscord(sink as any, { title: 'Test message', message })
     auditAfter = { ok: result.ok, code: result.code, error: result.error }
   } else {
     const parsed = EmailBody.safeParse(json)
@@ -91,7 +104,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<Params> }) {
     action: result.ok ? 'sink.test-send.ok' : 'sink.test-send.failed',
     target_type: typeResult.data === 'smtp' ? 'sink_smtp'
                : typeResult.data === 'resend' ? 'sink_resend'
-               : 'sink_ntfy',
+               : typeResult.data === 'ntfy' ? 'sink_ntfy'
+               : 'sink_discord_webhook',
     target_id: id,
     after: auditAfter,
     via: 'web',
