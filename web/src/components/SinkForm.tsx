@@ -3,52 +3,47 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
-interface InitialSmtp {
-  id: string; label: string; host: string; port: number; username: string
-  from_email: string; from_name: string | null; use_tls: boolean
-  incomplete: boolean; has_secret: boolean
-}
-interface InitialResend {
-  id: string; label: string; from_email: string; from_name: string | null
-  incomplete: boolean; has_secret: boolean
+/**
+ * One form, two type modes. The discriminator is the `type` prop, NOT
+ * the shape of `initial` — keeping the props non-discriminated dodges
+ * the TS narrowing weeds when called from a page where `type` is a
+ * runtime-checked string. Extra SMTP-only fields on `initial` are
+ * marked optional; the form just reads them when `type === 'smtp'`.
+ */
+export interface SinkInitial {
+  id: string
+  label: string
+  from_email: string
+  from_name: string | null
+  incomplete: boolean
+  has_secret: boolean
+  // SMTP-only — present when type === 'smtp'
+  host?: string
+  port?: number
+  username?: string
+  use_tls?: boolean
 }
 
-interface PropsNew {
-  mode: 'new'
+interface Props {
+  mode: 'new' | 'edit'
   type: 'smtp' | 'resend'
-  initial?: undefined
-}
-interface PropsEditSmtp {
-  mode: 'edit'
-  type: 'smtp'
-  initial: InitialSmtp
-}
-interface PropsEditResend {
-  mode: 'edit'
-  type: 'resend'
-  initial: InitialResend
+  initial?: SinkInitial
 }
 
-type Props = PropsNew | PropsEditSmtp | PropsEditResend
-
-export function SinkForm(props: Props) {
+export function SinkForm({ mode, type, initial }: Props) {
   const router = useRouter()
-  const isEdit = props.mode === 'edit'
-  const type = props.type
-  const init = isEdit ? props.initial : null
+  const isEdit = mode === 'edit'
 
-  const [label, setLabel] = useState((init?.label as string) ?? '')
-  const [fromEmail, setFromEmail] = useState(init?.from_email ?? '')
-  const [fromName, setFromName] = useState((init?.from_name as string | null) ?? '')
+  const [label, setLabel] = useState(initial?.label ?? '')
+  const [fromEmail, setFromEmail] = useState(initial?.from_email ?? '')
+  const [fromName, setFromName] = useState(initial?.from_name ?? '')
 
-  // SMTP-only
-  const [host, setHost] = useState(type === 'smtp' ? (init && 'host' in init ? init.host : '') : '')
-  const [port, setPort] = useState(type === 'smtp' ? (init && 'port' in init ? String(init.port) : '587') : '587')
-  const [username, setUsername] = useState(type === 'smtp' ? (init && 'username' in init ? init.username : '') : '')
-  const [useTls, setUseTls] = useState<boolean>(type === 'smtp' ? (init && 'use_tls' in init ? init.use_tls : true) : true)
+  const [host, setHost] = useState(initial?.host ?? '')
+  const [port, setPort] = useState(initial?.port != null ? String(initial.port) : '587')
+  const [username, setUsername] = useState(initial?.username ?? '')
+  const [useTls, setUseTls] = useState<boolean>(initial?.use_tls ?? true)
   const [password, setPassword] = useState('')
 
-  // Resend-only
   const [apiKey, setApiKey] = useState('')
 
   const [busy, setBusy] = useState(false)
@@ -59,7 +54,7 @@ export function SinkForm(props: Props) {
     setError(null)
     setBusy(true)
     try {
-      const url = isEdit ? `/api/sinks/${type}/${init!.id}` : '/api/sinks'
+      const url = isEdit ? `/api/sinks/${type}/${initial!.id}` : '/api/sinks'
       const method = isEdit ? 'PATCH' : 'POST'
       const body: Record<string, unknown> = isEdit ? {} : { type }
       body.label = label
@@ -80,8 +75,8 @@ export function SinkForm(props: Props) {
         body: JSON.stringify(body),
       })
       if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string }
-        setError(body.error ?? `Save failed (${res.status})`)
+        const errBody = (await res.json().catch(() => ({}))) as { error?: string }
+        setError(errBody.error ?? `Save failed (${res.status})`)
         setBusy(false)
         return
       }
@@ -93,7 +88,7 @@ export function SinkForm(props: Props) {
     }
   }
 
-  const passwordPlaceholder = isEdit && init?.has_secret
+  const secretPlaceholder = isEdit && initial?.has_secret
     ? 'leave blank to keep current'
     : 'required'
 
@@ -132,9 +127,9 @@ export function SinkForm(props: Props) {
           </label>
           <label className="block">
             <span className="text-sm text-zinc-400">Password</span>
-            <input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={passwordPlaceholder} className={inputCls} />
+            <input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={secretPlaceholder} className={inputCls} />
             <span className="mt-1 block text-xs text-zinc-500">
-              Encrypted at rest with AES-256-GCM. {isEdit && init?.has_secret ? 'Leave blank to keep the current password; type a new one to rotate it.' : 'Required to enable this sink.'}
+              Encrypted at rest with AES-256-GCM. {isEdit && initial?.has_secret ? 'Leave blank to keep the current password; type a new one to rotate it.' : 'Required to enable this sink.'}
             </span>
           </label>
           <label className="flex items-center gap-2 text-sm text-zinc-400">
@@ -147,9 +142,9 @@ export function SinkForm(props: Props) {
       {type === 'resend' && (
         <label className="block">
           <span className="text-sm text-zinc-400">API key</span>
-          <input type="password" autoComplete="new-password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={passwordPlaceholder} className={inputCls} />
+          <input type="password" autoComplete="new-password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={secretPlaceholder} className={inputCls} />
           <span className="mt-1 block text-xs text-zinc-500">
-            Encrypted at rest. {isEdit && init?.has_secret ? 'Leave blank to keep the current key.' : 'Required.'}
+            Encrypted at rest. {isEdit && initial?.has_secret ? 'Leave blank to keep the current key.' : 'Required.'}
           </span>
         </label>
       )}
