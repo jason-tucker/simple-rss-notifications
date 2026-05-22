@@ -1,7 +1,9 @@
+import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { sql } from 'drizzle-orm'
 import { db } from '@/lib/db/client'
 import { readSessionCookie } from '@/lib/auth/session'
+import { withUser } from '@/lib/db/withUser'
 import { BUILD_VERSION } from '@/lib/version'
 import { LogoutButton } from '@/components/LogoutButton'
 
@@ -21,6 +23,16 @@ export default async function HomePage() {
   if (Math.floor(new Date(user.password_changed_at).getTime() / 1000) > session.iat) redirect('/login')
   if (user.must_change_password) redirect('/account/password')
 
+  // Sink count for the dashboard summary + incomplete banner.
+  const sinkStats = await withUser(session.uid, async (tx) => {
+    const rows = await tx.execute<{ total: number; incomplete: number }>(sql`
+      SELECT
+        (SELECT count(*)::int FROM sinks_smtp) + (SELECT count(*)::int FROM sinks_resend) AS total,
+        (SELECT count(*)::int FROM sinks_smtp WHERE incomplete) + (SELECT count(*)::int FROM sinks_resend WHERE incomplete) AS incomplete
+    `)
+    return rows[0]!
+  })
+
   return (
     <div className="space-y-6">
       <header className="flex items-center justify-between">
@@ -34,10 +46,28 @@ export default async function HomePage() {
         RSS → email / ntfy bridge. Configure everything in the UI — no server-side
         config files, no restarts on change.
       </p>
-      <div className="rounded border border-zinc-800 bg-zinc-900 p-4 text-sm text-zinc-400">
-        v{BUILD_VERSION} — auth landed in PR3. Feeds, routes, sinks, and the
-        worker dashboard arrive in PR5–PR10.
-      </div>
+
+      {sinkStats.incomplete > 0 && (
+        <div className="rounded border border-amber-700 bg-amber-950 px-3 py-2 text-sm text-amber-200">
+          <Link href="/dashboard/sinks" className="underline">{sinkStats.incomplete} incomplete sink{sinkStats.incomplete === 1 ? '' : 's'}</Link>
+          {' — paste the missing password or API key to enable.'}
+        </div>
+      )}
+
+      <nav className="grid sm:grid-cols-2 gap-3">
+        <Link href="/dashboard/sinks" className="rounded border border-zinc-800 bg-zinc-900 p-4 hover:border-zinc-700">
+          <div className="text-sm text-zinc-500">Sinks</div>
+          <div className="mt-1 text-lg">{sinkStats.total} configured</div>
+          <div className="mt-1 text-xs text-zinc-500">SMTP + Resend destinations</div>
+        </Link>
+        <div className="rounded border border-zinc-800 bg-zinc-900 p-4 opacity-50">
+          <div className="text-sm text-zinc-500">Feeds</div>
+          <div className="mt-1 text-lg">— coming in PR5</div>
+          <div className="mt-1 text-xs text-zinc-500">RSS sources + routes</div>
+        </div>
+      </nav>
+
+      <p className="text-xs text-zinc-600">v{BUILD_VERSION}</p>
     </div>
   )
 }

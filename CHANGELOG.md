@@ -5,6 +5,19 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.4.0] — 2026-05-22 — PR4: Encrypted sinks + test-send
+
+### Added
+- **`lib/crypto/aead.ts`** — AES-256-GCM via `node:crypto`. Each encrypted field is stored as a 4-tuple `(ciphertext, iv, tag, key_version)`. `key_version` column is plumbed end-to-end so a future `APP_ENCRYPTION_KEY_V2` can rotate without re-encrypting every row at once.
+- **`sinks_smtp` + `sinks_resend` tables** (migration 0002), with **RLS policies** keyed off `app.current_user_id` (migration 0003). `web_role` GRANTed RW; `worker_role` inherits BYPASSRLS from PR2.
+- **`/api/sinks` REST**: `GET` (list, secrets never returned — only `has_secret: boolean`), `POST` (create SMTP or Resend), `PATCH /api/sinks/[type]/[id]` (partial update — blank password = keep current), `DELETE /api/sinks/[type]/[id]`, `POST /api/sinks/[type]/[id]/test` (rate-limited 10/min/user). Test-send sends an actual email through the sink and records audit row with `ok/code/error`.
+- **`lib/email/send.ts`** — outbound adapter. `sendViaSmtp` (nodemailer; surfaces nodemailer's error codes like EAUTH / ETIMEDOUT verbatim) and `sendViaResend` (REST API via `fetch`, optional `Idempotency-Key` for future dispatcher retries). Both refuse to send when `sink.incomplete=true`.
+- **`/dashboard/sinks` UI**: list page with per-row Test / Edit / Delete and an inline test-send dialog; `/dashboard/sinks/new` with type-aware form (SMTP fields vs Resend); `/dashboard/sinks/[type]/[id]` for edit. Password field is **write-only**: blank on edit means "keep current," paste a value to rotate. Reveal is intentionally NOT supported in v0.4.0 — that lands with the reauth gate.
+- **`lib/audit.ts`** — `writeAudit({...})` for state-changing routes + `redactSecretFields(body, ['password'])` helper. Stored secrets NEVER appear in audit_log rows.
+- **Bootstrap**: in addition to the user seed, worker now seeds an **IONOS SMTP sink** for the bootstrap user (`host=smtp.ionos.com`, `port=587`, `username/from=online@jasontucker.me`, password NULL → `incomplete=true`). Independently markered (`app_meta.ionos_sink_seeded_at`) so it runs on existing DBs that already have the user-seed marker. Bootstrap is now split into per-step seeders so future PRs can add more idempotently.
+- **Dashboard home page** now shows a sink count card and a yellow banner when any sink is incomplete.
+- **`next.config.mjs`**: `serverExternalPackages: ['nodemailer', '@node-rs/argon2']` so the webpack bundle doesn't try to trace either at build time (nodemailer uses dynamic requires; argon2 is a Rust native binding).
+
 ## [0.3.1] — 2026-05-22
 
 ### Changed
