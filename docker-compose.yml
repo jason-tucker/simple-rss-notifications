@@ -1,0 +1,142 @@
+# simple-rss-notifications — Docker Compose stack.
+#
+# Three application services + Postgres + Watchtower.
+#
+#   caddy   — ingress, fronted by Cloudflare Tunnel (cloudflared runs standalone
+#             on the host, NOT in this stack — see VPS_SETUP.md).
+#   web     — Next.js dashboard. UI + API routes only.
+#   worker  — Long-running poller/dispatcher. SAME image as web, different
+#             command — exists separately so web restarts don't bounce in-flight
+#             RSS dispatches and so scaling web later doesn't double-poll.
+#   db      — Postgres 16. No host port; reachable only over srn-net.
+#
+# NEVER add `ports: ["x:y"]` (0.0.0.0). Only Caddy gets a loopback bind so
+# cloudflared on the host can reach it.
+
+services:
+  caddy:
+    image: ${CADDY_IMAGE:-ghcr.io/jason-tucker/simple-rss-notifications:latest}
+    build:
+      context: .
+      args:
+        GIT_SHA: ${GIT_SHA:-dev}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
+    restart: unless-stopped
+    environment:
+      PORT: ${PORT:-6082}
+      NEXT_HOST: ${NEXT_HOST:-next-srn}
+    # Loopback ONLY — cloudflared (host) reaches us at 127.0.0.1:${PORT}.
+    # Not reachable from the public internet directly.
+    ports:
+      - "127.0.0.1:${PORT:-6082}:${PORT:-6082}"
+    networks:
+      - srn-net
+    depends_on:
+      - web
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  web:
+    image: ${WEB_IMAGE:-ghcr.io/jason-tucker/simple-rss-notifications-web:latest}
+    build:
+      context: ./web
+      args:
+        GIT_SHA: ${GIT_SHA:-dev}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
+        BUILD_VERSION: ${BUILD_VERSION:-0.0.0}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+      DATABASE_URL: postgresql://${POSTGRES_USER:-srn}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-srn}
+      SRN_ROLE: web
+    expose:
+      - "3000"
+    networks:
+      srn-net:
+        aliases:
+          - ${NEXT_ALIAS:-next-srn}
+    depends_on:
+      db:
+        condition: service_healthy
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  worker:
+    image: ${WEB_IMAGE:-ghcr.io/jason-tucker/simple-rss-notifications-web:latest}
+    # Same image as web, different role. Worker reads SRN_ROLE=worker
+    # and runs the poller/dispatcher loop instead of the HTTP server.
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-srn}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-srn}
+      SRN_ROLE: worker
+    command: ["node", "dist/worker/index.js"]
+    networks:
+      - srn-net
+    depends_on:
+      db:
+        condition: service_healthy
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-srn}
+      POSTGRES_USER: ${POSTGRES_USER:-srn}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - srn-db-data:/var/lib/postgresql/data
+    networks:
+      - srn-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-srn} -d ${POSTGRES_DB:-srn}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_POLL_INTERVAL: ${WATCHTOWER_POLL_INTERVAL:-30}
+      WATCHTOWER_CLEANUP: "true"
+    networks:
+      - srn-net
+
+networks:
+  srn-net:
+    driver: bridge
+
+volumes:
+  srn-db-data:

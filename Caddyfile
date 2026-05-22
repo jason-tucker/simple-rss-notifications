@@ -1,0 +1,33 @@
+# simple-rss-notifications — Caddy ingress.
+#
+# Listens on :${PORT:-6082} INSIDE the docker network. No host port mapping
+# beyond a 127.0.0.1 loopback bind in docker-compose.yml — Cloudflare Tunnel
+# (running standalone on the host) is the only public ingress.
+
+{
+  # Cloudflare terminates TLS at the edge.
+  auto_https off
+  # No `caddy reload` from inside the container.
+  admin off
+}
+
+:{$PORT:6082} {
+  encode gzip zstd
+
+  # Fall back to a minimal landing page if Next is down or returning 5xx,
+  # so the user never sees a blank Cloudflare error.
+  handle_errors {
+    @5xx expression `{err.status_code} >= 500`
+    handle @5xx {
+      root * /srv/landing
+      rewrite * /502.html
+      file_server
+    }
+  }
+
+  reverse_proxy {$NEXT_HOST:next-srn}:3000 {
+    fail_duration 5s
+    max_fails 2
+    lb_try_duration 2s
+  }
+}
