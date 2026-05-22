@@ -22,10 +22,15 @@ await build({
     'process.env.NEXT_PUBLIC_BUILD_VERSION': JSON.stringify(BUILD_VERSION),
     'process.env.NEXT_PUBLIC_GIT_SHA': JSON.stringify(GIT_SHA),
   },
-  // Workaround for argon2 / postgres-js: leave them external so the
-  // standalone runtime's traced node_modules can satisfy them (the build
-  // step copies node_modules into the standalone output anyway).
-  external: ['@node-rs/argon2'],
+  // Externals:
+  //   @node-rs/argon2 — Rust native binding, can't be bundled
+  //   server-only     — Next.js marker package that some shared modules import
+  //                     to refuse client-side bundling. In the worker we're
+  //                     always server-side, so the marker is meaningless,
+  //                     but esbuild still needs to resolve the import.
+  //                     Letting Node resolve it from the standalone's
+  //                     traced node_modules at runtime is the simple fix.
+  external: ['@node-rs/argon2', 'server-only'],
   tsconfig: 'tsconfig.json',
   logLevel: 'info',
 })
