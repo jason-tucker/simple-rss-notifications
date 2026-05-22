@@ -21,11 +21,10 @@ export default async function ActivityPage({
   const status = params.status && VALID_STATUS.has(params.status) ? params.status : null
   const feedFilter = params.feed && /^[0-9a-f-]{36}$/.test(params.feed) ? params.feed : null
 
-  const { rows, total, feeds, counts } = await withUser(session.uid, async (tx) => {
-    // Inline type literal because drizzle's tx.execute<T> requires
-    // T extends Record<string, unknown>, which named interfaces don't
-    // satisfy implicitly (no index signature).
-    const rows = await tx.execute<{
+  // Four independent read queries fan out across separate connections via
+  // parallel withUser() calls (postgres-js serializes within one tx).
+  const [rows, totalRows, feeds, counts] = await Promise.all([
+    withUser(session.uid, (tx) => tx.execute<{
       id: string; status: string; attempts: number
       scheduled_at: Date; dispatched_at: Date | null
       error: string | null; provider_message_id: string | null
@@ -56,21 +55,21 @@ export default async function ActivityPage({
         AND (${feedFilter}::uuid IS NULL OR f.id = ${feedFilter}::uuid)
       ORDER BY d.created_at DESC
       LIMIT 100
-    `)
-    const total = await tx.execute<{ c: number }>(sql`
+    `)),
+    withUser(session.uid, (tx) => tx.execute<{ c: number }>(sql`
       SELECT count(*)::int AS c FROM dispatches d
       JOIN feed_items fi ON fi.id = d.feed_item_id
       WHERE (${status}::text IS NULL OR d.status = ${status}::text)
         AND (${feedFilter}::uuid IS NULL OR fi.feed_id = ${feedFilter}::uuid)
-    `)
-    const feeds = await tx.execute<{ id: string; label: string }>(sql`
+    `)),
+    withUser(session.uid, (tx) => tx.execute<{ id: string; label: string }>(sql`
       SELECT id, label FROM feeds ORDER BY label
-    `)
-    const counts = await tx.execute<{ status: string; c: number }>(sql`
+    `)),
+    withUser(session.uid, (tx) => tx.execute<{ status: string; c: number }>(sql`
       SELECT status, count(*)::int AS c FROM dispatches GROUP BY status
-    `)
-    return { rows, total: total[0]?.c ?? 0, feeds, counts }
-  })
+    `)),
+  ])
+  const total = totalRows[0]?.c ?? 0
 
   const countMap = Object.fromEntries(counts.map((c) => [c.status, c.c])) as Record<string, number>
 

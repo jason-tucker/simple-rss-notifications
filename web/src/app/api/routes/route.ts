@@ -7,6 +7,7 @@ import { isSameOrigin } from '@/lib/auth/csrf'
 import { withUser } from '@/lib/db/withUser'
 import { writeAudit } from '@/lib/audit'
 import { clientIp } from '@/lib/ratelimit'
+import { notifyFeedsChanged } from '@/lib/db/notify'
 
 export const dynamic = 'force-dynamic'
 
@@ -141,6 +142,7 @@ export async function POST(req: NextRequest) {
       via: 'web',
       ip,
     })
+    void notifyFeedsChanged()
     return NextResponse.json({ ok: true, id: routeId })
   })
 }
