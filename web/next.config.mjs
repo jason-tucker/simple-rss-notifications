@@ -4,6 +4,12 @@
 const nextConfig = {
   output: 'standalone',
 
+  // Keep these CJS / native-binding packages OUT of the webpack bundle so
+  // they resolve from node_modules at runtime instead. nodemailer relies
+  // on dynamic require() patterns that webpack can't trace; @node-rs/argon2
+  // is a Rust native binding and can't be bundled at all.
+  serverExternalPackages: ['nodemailer', '@node-rs/argon2'],
+
   async headers() {
     return [
       {
