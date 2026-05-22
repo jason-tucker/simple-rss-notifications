@@ -25,6 +25,14 @@ ENV BUILD_VERSION=$BUILD_VERSION
 ENV NEXT_PUBLIC_GIT_SHA=$GIT_SHA
 ENV NEXT_PUBLIC_BUILD_VERSION=$BUILD_VERSION
 ENV NEXT_TELEMETRY_DISABLED=1
+# Stub env vars for the Next.js build phase only — env.ts validates these,
+# and the 'Collecting page data' pass imports route files that transitively
+# read env. Runtime values come from docker-compose's env_file at startup;
+# these stubs are baked ONLY into the builder layer and discarded.
+ENV SESSION_SECRET=0000000000000000000000000000000000000000000000000000000000000000
+ENV APP_ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000
+ENV DATABASE_URL=postgresql://stub:stub@localhost:5432/stub
+ENV PUBLIC_BASE_URL=http://localhost:3000
 RUN pnpm build
 
 # ─── runner ──────────────────────────────────────────────────────────

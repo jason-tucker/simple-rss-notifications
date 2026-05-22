@@ -21,7 +21,7 @@ import { env } from '@/lib/env'
 import { BUILD_VERSION, GIT_SHA } from '@/lib/version'
 import { db, pg } from '@/lib/db/client'
 import { runMigrations } from '@/lib/db/migrate'
-import { worker_heartbeats } from '@/lib/db/schema'
+import { bootstrap } from './bootstrap'
 
 const HEARTBEAT_INTERVAL_MS = 30_000
 const HEARTBEAT_ID = 'singleton'
@@ -65,6 +65,10 @@ async function main() {
   // Migrations — only the worker runs these. Web containers never touch DDL.
   await runMigrations()
   log('migrations-applied')
+
+  // Bootstrap the admin user on a fresh DB. Idempotent: subsequent boots
+  // see app_meta.bootstrap_completed_at and skip.
+  await bootstrap(log)
 
   // Heartbeat loop. If a beat fails we log but keep looping — a transient
   // Postgres blip should not kill the worker. If beats fail repeatedly the

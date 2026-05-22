@@ -1,13 +1,13 @@
 {
   "name": "simple-rss-notifications-web",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.33.2",
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build && pnpm build:worker",
-    "build:worker": "esbuild src/worker/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/worker/index.js --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
+    "build:worker": "node scripts/build-worker.mjs",
     "start": "next start -p 3000",
     "worker": "tsx src/worker/index.ts",
     "typecheck": "tsc --noEmit",
@@ -15,7 +15,9 @@
     "db:migrate": "tsx scripts/migrate.ts"
   },
   "dependencies": {
+    "@node-rs/argon2": "^2.0.2",
     "drizzle-orm": "^0.36.4",
+    "jose": "^5.9.6",
     "next": "^15.0.3",
     "postgres": "^3.4.5",
     "react": "^19.0.0",

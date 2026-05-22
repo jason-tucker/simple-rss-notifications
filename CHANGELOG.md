@@ -5,6 +5,22 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.3.0] — 2026-05-22 — PR3: Auth
+
+### Added
+- **argon2id password hashing** via `@node-rs/argon2` (Rust-native, OWASP 2024 params: memoryCost=19 MiB, timeCost=2). Hash and verify helpers in `lib/auth/password.ts`.
+- **JWT sessions** via `jose` HS512 in a `__Host-session` cookie (httpOnly, secure, SameSite=Lax, path=/). Server-side `jti` is mirrored to `web_sessions` for revocation; `password_changed_at` vs `iat` is the second revocation channel.
+- **`withAuth` API wrapper** — verifies cookie, looks up jti, checks `password_changed_at`, enforces CSRF origin check (non-GET), applies per-user (120/min) and per-IP (600/min) rate limits, and gates `requireElevated` (PR4 turns this on for sensitive ops).
+- **`lib/ratelimit.ts`** — Postgres sliding-window rate limiter. Single `INSERT … ON CONFLICT DO UPDATE` atomically resets a stale window or increments the current one. `clientIp(req)` trusts `CF-Connecting-IP` (cloudflared is the only ingress path).
+- **`lib/auth/csrf.ts`** — Origin-header check against `PUBLIC_BASE_URL`. Defense-in-depth alongside SameSite=Lax cookies.
+- **API routes**: `POST /api/auth/login` (rate-limited 5/min/IP + 10/hour/user, dummy-hash branch to avoid username enumeration via timing), `POST /api/auth/logout` (deletes web_sessions row, clears cookie), `POST /api/auth/change-password` (verifies current password, hashes new, deletes ALL sessions for the user, audit-logs with redacted secrets), `GET /api/auth/me`.
+- **Pages**: `/login` (form with rate-limit error surfacing), `/account/password` (forced first-login flow + voluntary change). Home page now redirects to `/login` if unauth and to `/account/password` if `must_change_password=true`.
+- **`middleware.ts`** — Edge-runtime UX redirect: missing cookie → `/login?next=<path>`. Real session validation still happens in pages/routes (Edge can't reach Postgres).
+- **Bootstrap user** seeded on worker boot: `tucker` / `admin` with `must_change_password=true`. Idempotent — writes `app_meta.bootstrap_completed_at` so password changes in `.env` after first boot don't reset the live password. Safety belt also bails if the `users` table is non-empty. Set `BOOTSTRAP_USERNAME=skip` to disable.
+
+### Fixed
+- Worker bundle now reports the real `BUILD_VERSION` and `GIT_SHA` in logs and the `worker_heartbeats` row. Replaced inline `esbuild` invocation with `scripts/build-worker.mjs` that injects the values via `--define`. `@node-rs/argon2` is marked external (Rust native — can't be bundled) and resolves from the Next standalone's traced `node_modules` at runtime.
+
 ## [0.2.1] — 2026-05-22
 
 ### Fixed
