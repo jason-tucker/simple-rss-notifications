@@ -5,6 +5,12 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.1.1] — 2026-05-22
+
+### Fixed
+- Removed per-stack watchtower service. `containrrr/watchtower:latest` requires Docker API ≥ 1.40 which this VPS doesn't speak; it was crash-looping. The host already runs a `nickfedor/watchtower` (maintained fork) in another stack — our containers carry `com.centurylinklabs.watchtower.enable=true` labels so they're picked up automatically without a duplicate per-stack watchtower.
+- Removed `WATCHTOWER_POLL_INTERVAL` from `.env.example` since the host's watchtower owns the polling interval.
+
 ## [0.1.0] — 2026-05-22
 
 ### Added
