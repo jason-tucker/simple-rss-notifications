@@ -84,12 +84,18 @@ export default async function HomePage() {
         </Link>
       </nav>
 
-      {(stats.dispatches_pending > 0 || stats.dispatches_failed_24h > 0) && (
-        <div className="text-xs text-zinc-500">
-          dispatch queue: {stats.dispatches_pending} pending
-          {stats.dispatches_failed_24h > 0 && <span className="text-red-400"> · {stats.dispatches_failed_24h} failed (24h)</span>}
-        </div>
-      )}
+      <div className="text-xs text-zinc-500">
+        <Link href="/dashboard/activity" className="hover:text-zinc-300 underline">activity →</Link>
+        {' · '}{stats.dispatches_pending} pending
+        {stats.dispatches_failed_24h > 0 && (
+          <>
+            {' · '}
+            <Link href="/dashboard/activity?status=failed" className="text-red-400 hover:text-red-300 underline">
+              {stats.dispatches_failed_24h} failed in 24h
+            </Link>
+          </>
+        )}
+      </div>
 
       <p className="text-xs text-zinc-600">v{BUILD_VERSION}</p>
     </div>
