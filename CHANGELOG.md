@@ -5,6 +5,19 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.9.0] — 2026-05-22 — PR9: Activity dashboard + retry
+
+### Added
+- **`/dashboard/activity`** page — last 100 dispatches across all routes/sinks with status chips (`sent`/`pending`/`failed`/`skipped`), per-row error pre-block, attempt count, scheduled/last-tried timestamps, and a "Source ↗" link to the feed item. Filter pills (All / Pending / Sent / Failed / Skipped) with live counts; a feed-picker form narrows further.
+- **Retry button** on failed dispatches. Resets `status='pending'`, `attempts=0`, `scheduled_at=now()`, clears `error` — worker picks it up on its next tick. Permanent-failure codes (sink-incomplete, EAUTH, discord-http-4xx, etc.) will fail again immediately if the underlying problem isn't fixed; the retry button doesn't paper over them.
+- **`GET /api/dispatches`** — paginated list with `status` / `feed_id` / `route_id` / `limit` / `offset` filters, joining routes + feed_items + the right sink table to assemble per-row context.
+- **`POST /api/dispatches/[id]/retry`** — `failed → pending`, 409 if the dispatch is in any other state, rate-limited 30/min/user, audit-logged.
+- **Dashboard home** dispatch summary line is now a link to `/dashboard/activity`; the failed-in-24h count links straight to the filtered view.
+
+### Notes
+- Retry counter resets to 0 so the exponential backoff ladder starts fresh on the next attempt.
+- Activity rows are returned sorted by `created_at DESC` so backfill bursts read newest-first.
+
 ## [0.8.0] — 2026-05-22 — PR8: Routes overhaul + Discord webhook sink
 
 ### Changed — route model (breaking, auto-migrated)
