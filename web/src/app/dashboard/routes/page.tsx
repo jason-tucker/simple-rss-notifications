@@ -38,7 +38,8 @@ export default async function RoutesPage() {
       WHERE rd.route_id = ANY(ARRAY[${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)}])
       ORDER BY rd.created_at
     `)
-    const byRoute = new Map<string, typeof dests>()
+    type Dest = (typeof dests)[number]
+    const byRoute = new Map<string, Dest[]>()
     for (const d of dests) {
       const arr = byRoute.get(d.route_id) ?? []
       arr.push(d)
