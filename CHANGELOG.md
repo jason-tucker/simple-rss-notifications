@@ -5,6 +5,11 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.1.2] — 2026-05-22
+
+### Fixed
+- Worker crash-loop: `dist/worker/index.js` threw `ERR_MODULE_NOT_FOUND: zod` because esbuild's `--packages=external` excluded all npm packages, but the Next.js standalone trace only includes Next-runtime deps — not zod. Now esbuild bundles all dependencies into a single worker file, with a `createRequire` banner so the ESM bundle can still load occasional CJS modules at runtime.
+
 ## [0.1.1] — 2026-05-22
 
 ### Fixed
