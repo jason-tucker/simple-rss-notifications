@@ -5,15 +5,19 @@
  *
  * Boot sequence:
  *   1. Validate env (lib/env.ts refuses to start on missing secrets).
- *   2. Connect to Postgres as worker_role (BYPASSRLS).
+ *   2. Connect to Postgres as POSTGRES_USER (table owner, bypasses RLS).
  *   3. Apply pending migrations.
- *   4. Upsert a heartbeat row every 30s — web reads it for the
- *      /api/health/worker check.
+ *   4. Run idempotent bootstrap seeders.
+ *   5. Loop forever:
+ *        - try to poll one due feed (greedy drain — if work was done,
+ *          immediately try the next one)
+ *        - try to dispatch one pending dispatch (same greedy drain)
+ *        - if nothing was due, sleep briefly
+ *        - upsert heartbeat every 30 s on a separate timer
  *
- * v0.2.0 scope ends here. Real responsibilities land PR-by-PR:
- *   PR6 — Postgres LISTEN/NOTIFY + 60s safety-net poll
- *   PR7 — RSS poller (per-feed cadence, ETag/304, dedup, retry-on-boot)
- *   PR10 — ntfy SSE subscriber (long-lived per topic, exp backoff reconnect)
+ * v0.5.0 — polling + dispatch live. Real LISTEN/NOTIFY for instant
+ * config propagation arrives in a later PR; for now the loop just polls
+ * the DB each tick (cheap, no extra dep, ~1 query/2s).
  */
 
 import { sql } from 'drizzle-orm'
@@ -22,8 +26,12 @@ import { BUILD_VERSION, GIT_SHA } from '@/lib/version'
 import { db, pg } from '@/lib/db/client'
 import { runMigrations } from '@/lib/db/migrate'
 import { bootstrap } from './bootstrap'
+import { pollOneDueFeed } from './rssPoller'
+import { dispatchOnePending } from './dispatcher'
 
 const HEARTBEAT_INTERVAL_MS = 30_000
+const IDLE_SLEEP_MS = 2_000          // when no work was found
+const ERROR_SLEEP_MS = 5_000         // after a tick that threw
 const HEARTBEAT_ID = 'singleton'
 
 let shuttingDown = false
@@ -46,9 +54,6 @@ process.on('unhandledRejection', (reason) => { log('unhandled-rejection', { reas
 process.on('uncaughtException',  (err)    => { log('uncaught-exception',  { err: err.message })       ; process.exit(1) })
 
 async function beat() {
-  // Upsert keyed by 'singleton' — exactly one heartbeat row regardless of
-  // how many times the worker restarts. last_beat_at is read by
-  // /api/health/worker to detect a stuck/dead worker.
   await db.execute(sql`
     INSERT INTO worker_heartbeats (id, last_beat_at, build_version, git_sha)
     VALUES (${HEARTBEAT_ID}, now(), ${BUILD_VERSION}, ${GIT_SHA})
@@ -59,30 +64,43 @@ async function beat() {
   `)
 }
 
+function startHeartbeat() {
+  // Independent timer so a slow poll doesn't starve the heartbeat.
+  const tick = async () => {
+    if (shuttingDown) return
+    try { await beat() } catch (err) {
+      log('heartbeat-failed', { err: err instanceof Error ? err.message : String(err) })
+    }
+    setTimeout(tick, HEARTBEAT_INTERVAL_MS).unref()
+  }
+  setTimeout(tick, 0).unref()
+}
+
+async function workLoop() {
+  while (!shuttingDown) {
+    try {
+      const didPoll = await pollOneDueFeed(log)
+      const didDispatch = await dispatchOnePending(log)
+      if (!didPoll && !didDispatch) {
+        await new Promise((r) => setTimeout(r, IDLE_SLEEP_MS))
+      }
+    } catch (err) {
+      log('work-loop-error', { err: err instanceof Error ? err.message : String(err) })
+      await new Promise((r) => setTimeout(r, ERROR_SLEEP_MS))
+    }
+  }
+}
+
 async function main() {
   log('boot', { version: BUILD_VERSION, sha: GIT_SHA, role: env.SRN_ROLE })
 
-  // Migrations — only the worker runs these. Web containers never touch DDL.
   await runMigrations()
   log('migrations-applied')
 
-  // Bootstrap the admin user on a fresh DB. Idempotent: subsequent boots
-  // see app_meta.bootstrap_completed_at and skip.
   await bootstrap(log)
 
-  // Heartbeat loop. If a beat fails we log but keep looping — a transient
-  // Postgres blip should not kill the worker. If beats fail repeatedly the
-  // /api/health/worker check will flag the staleness and the UI banner
-  // surfaces it.
-  while (!shuttingDown) {
-    try {
-      await beat()
-      log('heartbeat', { uptimeSec: Math.floor(process.uptime()) })
-    } catch (err) {
-      log('heartbeat-failed', { err: err instanceof Error ? err.message : String(err) })
-    }
-    await new Promise((r) => setTimeout(r, HEARTBEAT_INTERVAL_MS))
-  }
+  startHeartbeat()
+  await workLoop()
 }
 
 main().catch((err) => {
