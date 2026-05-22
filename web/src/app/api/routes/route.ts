@@ -12,12 +12,20 @@ export const dynamic = 'force-dynamic'
 
 const Body = z.object({
   feed_id: z.string().uuid(),
-  sink_type: z.enum(['smtp', 'resend']),
+  sink_type: z.enum(['smtp', 'resend', 'ntfy']),
   sink_id: z.string().uuid(),
-  destination: z.string().email().max(320),
+  /**
+   * Required for email sinks (SMTP/Resend); ignored for ntfy (the ntfy
+   * sink already carries server_url + topic, the dispatcher routes there).
+   * The refine() below enforces the discrimination.
+   */
+  destination: z.string().max(320).optional().nullable(),
   label: z.string().max(100).optional().nullable(),
   enabled: z.boolean().default(true),
-})
+}).refine(
+  (data) => data.sink_type === 'ntfy' || (typeof data.destination === 'string' && /.+@.+/.test(data.destination)),
+  { message: 'destination email is required for SMTP and Resend sinks', path: ['destination'] },
+)
 
 export async function GET() {
   const session = await readSessionCookie()
@@ -55,16 +63,21 @@ export async function POST(req: NextRequest) {
     if (feedExists.length === 0) {
       return NextResponse.json({ error: 'feed-not-found', code: 'feed-not-found' }, { status: 400 })
     }
-    const sinkTable = parsed.data.sink_type === 'smtp' ? sql`sinks_smtp` : sql`sinks_resend`
+    const sinkTable = parsed.data.sink_type === 'smtp' ? sql`sinks_smtp`
+                    : parsed.data.sink_type === 'resend' ? sql`sinks_resend`
+                    : sql`sinks_ntfy`
     const sinkExists = await tx.execute(sql`SELECT 1 FROM ${sinkTable} WHERE id = ${parsed.data.sink_id}::uuid`)
     if (sinkExists.length === 0) {
       return NextResponse.json({ error: 'sink-not-found', code: 'sink-not-found' }, { status: 400 })
     }
 
+    // ntfy stores no per-route destination — keep the column NULL.
+    const dest = parsed.data.sink_type === 'ntfy' ? null : (parsed.data.destination ?? null)
+
     const rows = await tx.execute<{ id: string }>(sql`
       INSERT INTO routes (user_id, feed_id, sink_type, sink_id, destination, label, enabled)
       VALUES (${session.uid}::uuid, ${parsed.data.feed_id}::uuid, ${parsed.data.sink_type}, ${parsed.data.sink_id}::uuid,
-              ${parsed.data.destination}, ${parsed.data.label ?? null}, ${parsed.data.enabled})
+              ${dest}, ${parsed.data.label ?? null}, ${parsed.data.enabled})
       RETURNING id
     `)
     const id = rows[0]!.id

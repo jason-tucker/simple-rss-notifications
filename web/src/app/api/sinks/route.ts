@@ -8,12 +8,13 @@ import { isSameOrigin } from '@/lib/auth/csrf'
 import { encrypt } from '@/lib/crypto/aead'
 import { writeAudit, redactSecretFields } from '@/lib/audit'
 import { clientIp } from '@/lib/ratelimit'
+import { checkSafeOutboundUrl } from '@/lib/ssrf'
 
 export const dynamic = 'force-dynamic'
 
 /**
  * GET  /api/sinks       → list all sinks for the current user, secrets redacted
- * POST /api/sinks       → create a new SMTP or Resend sink
+ * POST /api/sinks       → create a new SMTP, Resend, or ntfy sink
  *
  * Per-item edit and delete live at /api/sinks/[type]/[id].
  *
@@ -23,15 +24,20 @@ export const dynamic = 'force-dynamic'
  */
 
 interface ListedSink {
-  type: 'smtp' | 'resend'
+  type: 'smtp' | 'resend' | 'ntfy'
   id: string
   label: string
-  from_email: string
-  from_name: string | null
+  from_email?: string
+  from_name?: string | null
   host?: string
   port?: number
   username?: string
   use_tls?: boolean
+  server_url?: string
+  topic?: string
+  default_priority?: number
+  default_tags?: string | null
+  include_link?: boolean
   incomplete: boolean
   has_secret: boolean
   created_at: string
@@ -64,6 +70,17 @@ export async function GET() {
              created_at, updated_at
       FROM sinks_resend ORDER BY created_at
     `)
+    const ntfy = await tx.execute<{
+      id: string; label: string; server_url: string; topic: string
+      default_priority: number; default_tags: string | null; include_link: boolean
+      incomplete: boolean; has_secret: boolean
+      created_at: Date; updated_at: Date
+    }>(sql`
+      SELECT id, label, server_url, topic, default_priority, default_tags, include_link,
+             incomplete, (token_ciphertext IS NOT NULL) AS has_secret,
+             created_at, updated_at
+      FROM sinks_ntfy ORDER BY created_at
+    `)
     const out: ListedSink[] = [
       ...smtp.map((s) => ({
         type: 'smtp' as const,
@@ -81,6 +98,16 @@ export async function GET() {
         created_at: new Date(s.created_at).toISOString(),
         updated_at: new Date(s.updated_at).toISOString(),
       })),
+      ...ntfy.map((s) => ({
+        type: 'ntfy' as const,
+        id: s.id, label: s.label,
+        server_url: s.server_url, topic: s.topic,
+        default_priority: s.default_priority, default_tags: s.default_tags,
+        include_link: s.include_link,
+        incomplete: s.incomplete, has_secret: s.has_secret,
+        created_at: new Date(s.created_at).toISOString(),
+        updated_at: new Date(s.updated_at).toISOString(),
+      })),
     ]
     return NextResponse.json({ sinks: out })
   })
@@ -92,7 +119,7 @@ const SmtpBody = z.object({
   host: z.string().min(1).max(255),
   port: z.number().int().min(1).max(65535),
   username: z.string().min(1).max(255),
-  password: z.string().min(1).max(1024).optional(), // blank = create incomplete
+  password: z.string().min(1).max(1024).optional(),
   from_email: z.string().email(),
   from_name: z.string().max(100).optional().nullable(),
   use_tls: z.boolean().default(true),
@@ -106,7 +133,18 @@ const ResendBody = z.object({
   from_name: z.string().max(100).optional().nullable(),
 })
 
-const Body = z.discriminatedUnion('type', [SmtpBody, ResendBody])
+const NtfyBody = z.object({
+  type: z.literal('ntfy'),
+  label: z.string().min(1).max(100),
+  server_url: z.string().url().max(2048).default('https://ntfy.sh'),
+  topic: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/, 'topic must be alphanumeric, dash, or underscore'),
+  token: z.string().max(1024).optional(),
+  default_priority: z.number().int().min(1).max(5).default(3),
+  default_tags: z.string().max(200).optional().nullable(),
+  include_link: z.boolean().default(true),
+})
+
+const Body = z.discriminatedUnion('type', [SmtpBody, ResendBody, NtfyBody])
 
 export async function POST(req: NextRequest) {
   if (!isSameOrigin(req)) return NextResponse.json({ error: 'forbidden', code: 'csrf' }, { status: 403 })
@@ -119,6 +157,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'bad-request', issues: parsed.error.issues }, { status: 400 })
   }
   const ip = clientIp(req)
+
+  if (parsed.data.type === 'ntfy') {
+    // Catch obvious SSRF up-front (private IPs, cloud metadata). The
+    // dispatcher re-checks every call too, but failing fast in the UI
+    // is friendlier.
+    const ssrf = await checkSafeOutboundUrl(parsed.data.server_url)
+    if (ssrf) return NextResponse.json({ error: ssrf, code: 'ssrf-blocked' }, { status: 400 })
+  }
 
   return withUser(session.uid, async (tx) => {
     if (parsed.data.type === 'smtp') {
@@ -147,7 +193,9 @@ export async function POST(req: NextRequest) {
         ip,
       })
       return NextResponse.json({ ok: true, id, type: 'smtp' })
-    } else {
+    }
+
+    if (parsed.data.type === 'resend') {
       const enc = parsed.data.api_key ? encrypt(parsed.data.api_key) : null
       const rows = await tx.execute<{ id: string }>(sql`
         INSERT INTO sinks_resend (
@@ -174,5 +222,32 @@ export async function POST(req: NextRequest) {
       })
       return NextResponse.json({ ok: true, id, type: 'resend' })
     }
+
+    // type === 'ntfy'
+    const enc = parsed.data.token ? encrypt(parsed.data.token) : null
+    const rows = await tx.execute<{ id: string }>(sql`
+      INSERT INTO sinks_ntfy (
+        user_id, label, server_url, topic,
+        token_ciphertext, token_iv, token_tag, token_key_version,
+        default_priority, default_tags, include_link, incomplete
+      )
+      VALUES (
+        ${session.uid}::uuid, ${parsed.data.label}, ${parsed.data.server_url}, ${parsed.data.topic},
+        ${enc?.ciphertext ?? null}, ${enc?.iv ?? null}, ${enc?.tag ?? null}, ${enc?.keyVersion ?? null},
+        ${parsed.data.default_priority}, ${parsed.data.default_tags ?? null}, ${parsed.data.include_link}, false
+      )
+      RETURNING id
+    `)
+    const id = rows[0]!.id
+    void writeAudit({
+      actor_user_id: session.uid,
+      action: 'sink.create',
+      target_type: 'sink_ntfy',
+      target_id: id,
+      after: redactSecretFields(parsed.data, ['token']),
+      via: 'web',
+      ip,
+    })
+    return NextResponse.json({ ok: true, id, type: 'ntfy' })
   })
 }

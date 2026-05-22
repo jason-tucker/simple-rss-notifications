@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
 interface FeedOption {
@@ -12,7 +12,8 @@ interface SinkOption {
   id: string
   label: string
   incomplete: boolean
-  type: 'smtp' | 'resend'
+  type: 'smtp' | 'resend' | 'ntfy'
+  topic: string | null
 }
 
 export function NewRouteForm({ feeds, sinks }: { feeds: FeedOption[]; sinks: SinkOption[] }) {
@@ -24,26 +25,34 @@ export function NewRouteForm({ feeds, sinks }: { feeds: FeedOption[]; sinks: Sin
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const selectedSink = useMemo(() => {
+    const [t, id] = sinkKey.split(':')
+    return sinks.find((s) => s.type === t && s.id === id) ?? null
+  }, [sinkKey, sinks])
+
+  const isNtfy = selectedSink?.type === 'ntfy'
+
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
     setBusy(true)
     try {
       const [sinkType, sinkId] = sinkKey.split(':')
+      const body: Record<string, unknown> = {
+        feed_id: feedId,
+        sink_type: sinkType,
+        sink_id: sinkId,
+        label: label.trim() || null,
+      }
+      if (!isNtfy) body.destination = destination
       const res = await fetch('/api/routes', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          feed_id: feedId,
-          sink_type: sinkType,
-          sink_id: sinkId,
-          destination,
-          label: label.trim() || null,
-        }),
+        body: JSON.stringify(body),
       })
       if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string }
-        setError(body.error ?? `Save failed (${res.status})`)
+        const errBody = (await res.json().catch(() => ({}))) as { error?: string }
+        setError(errBody.error ?? `Save failed (${res.status})`)
         setBusy(false)
         return
       }
@@ -79,13 +88,23 @@ export function NewRouteForm({ feeds, sinks }: { feeds: FeedOption[]; sinks: Sin
           ))}
         </select>
       </label>
-      <label className="block">
-        <span className="text-sm text-zinc-400">Destination email</span>
-        <input required type="email" value={destination} onChange={(e) => setDestination(e.target.value)} className={inputCls} placeholder="tucker@itsupportri.com" />
-      </label>
+
+      {isNtfy ? (
+        <div className="rounded border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-400">
+          ntfy routes deliver to the sink&apos;s configured topic
+          {selectedSink?.topic && (<>: <span className="text-zinc-200">{selectedSink.topic}</span></>)}.
+          No per-route destination needed.
+        </div>
+      ) : (
+        <label className="block">
+          <span className="text-sm text-zinc-400">Destination email</span>
+          <input required type="email" value={destination} onChange={(e) => setDestination(e.target.value)} className={inputCls} placeholder="tucker@itsupportri.com" />
+        </label>
+      )}
+
       <label className="block">
         <span className="text-sm text-zinc-400">Label <span className="text-zinc-600">(optional)</span></span>
-        <input maxLength={100} value={label} onChange={(e) => setLabel(e.target.value)} className={inputCls} placeholder="e.g. UniFi → me" />
+        <input maxLength={100} value={label} onChange={(e) => setLabel(e.target.value)} className={inputCls} placeholder="e.g. UniFi → phone" />
       </label>
       {error && <p className="text-sm text-red-400">{error}</p>}
       <div className="flex gap-2 pt-2">
