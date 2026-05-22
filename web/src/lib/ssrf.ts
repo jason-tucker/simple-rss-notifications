@@ -53,7 +53,7 @@ export async function checkSafeOutboundUrl(rawUrl: string): Promise<string | nul
   // DNS lookup. Resolve A + AAAA records and reject if ANY of them is
   // private — covers split-horizon DNS where a domain resolves to a
   // public address once and a private address later.
-  let records: Array<{ address: string; family: 4 | 6 }>
+  let records: Array<{ address: string; family: number }>
   try {
     records = await dns.lookup(host, { all: true, verbatim: true })
   } catch (err) {
@@ -62,7 +62,8 @@ export async function checkSafeOutboundUrl(rawUrl: string): Promise<string | nul
   if (records.length === 0) return `no DNS records for ${host}`
 
   for (const r of records) {
-    if (isPrivateAddress(r.address, r.family)) {
+    const fam = r.family === 4 || r.family === 6 ? r.family : null
+    if (fam && isPrivateAddress(r.address, fam)) {
       return `${host} resolves to private/reserved address ${r.address}`
     }
   }
