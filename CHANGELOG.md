@@ -5,6 +5,11 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.3.1] — 2026-05-22
+
+### Changed
+- Password minimum lowered from 12 to 8 characters (zod schema, client-side pre-check, and helper copy on the change-password page). Same minimum will apply to the upcoming reauth password.
+
 ## [0.3.0] — 2026-05-22 — PR3: Auth
 
 ### Added

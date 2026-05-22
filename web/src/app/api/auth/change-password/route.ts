@@ -10,7 +10,7 @@ import { rateLimit, clientIp } from '@/lib/ratelimit'
 
 const Body = z.object({
   current_password: z.string().min(1).max(512),
-  new_password: z.string().min(12).max(512),
+  new_password: z.string().min(8).max(512),
 })
 
 /**
