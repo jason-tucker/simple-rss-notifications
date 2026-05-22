@@ -1,0 +1,34 @@
+# Secrets — NEVER commit
+.env
+.env.*
+!.env.example
+
+# Node / pnpm
+node_modules/
+.pnpm-store/
+.next/
+dist/
+build/
+out/
+
+# TypeScript
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Drizzle generated
+web/drizzle/
+
+# Local docker volumes if mounted
+postgres-data/
