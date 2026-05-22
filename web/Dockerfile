@@ -40,10 +40,13 @@ RUN addgroup -g 1001 -S nodejs && adduser -u 1001 -S nextjs -G nodejs
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-# Worker bundle (esbuild produces a single file with --packages=external, so
-# we also need the standalone's traced node_modules — which are already under
-# ./node_modules from the standalone copy above).
+# Worker bundle. esbuild now inlines all deps into a single file, so no
+# additional node_modules tracing is needed for the worker path.
 COPY --from=builder --chown=nextjs:nodejs /app/dist ./dist
+# Drizzle migration .sql files. The worker reads these from /app/migrations
+# on boot (see lib/db/migrate.ts). Kept outside dist/ so they're not
+# re-bundled — esbuild can't bundle .sql files.
+COPY --from=builder --chown=nextjs:nodejs /app/src/lib/db/migrations ./migrations
 
 USER nextjs
 EXPOSE 3000

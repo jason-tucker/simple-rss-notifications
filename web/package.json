@@ -1,6 +1,6 @@
 {
   "name": "simple-rss-notifications-web",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.33.2",
@@ -10,10 +10,14 @@
     "build:worker": "esbuild src/worker/index.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/worker/index.js --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
     "start": "next start -p 3000",
     "worker": "tsx src/worker/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/lib/db/migrate.ts"
   },
   "dependencies": {
+    "drizzle-orm": "^0.36.4",
     "next": "^15.0.3",
+    "postgres": "^3.4.5",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "zod": "^3.23.8"
@@ -23,6 +27,7 @@
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.1",
     "autoprefixer": "^10.4.20",
+    "drizzle-kit": "^0.28.1",
     "esbuild": "^0.24.0",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.14",

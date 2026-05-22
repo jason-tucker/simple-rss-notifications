@@ -5,6 +5,19 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.2.0] — 2026-05-22 — PR2: DB foundation
+
+### Added
+- Drizzle ORM + `postgres-js` + `drizzle-kit` for schema/migrations.
+- Initial schema: `users` (with `reauth_password_hash`, `must_change_password`, `password_changed_at`), `web_sessions` (server-side JWT mirror for revocation), `audit_log` (every state-changing route logs here), `rate_limit_buckets` (Postgres-based sliding window, no Redis dep), `worker_heartbeats` (singleton row, web reads for liveness banner), `app_meta` (key/value singleton state, e.g. `bootstrap_completed_at`).
+- Postgres roles `web_role` (RLS-enforced, NOLOGIN) and `worker_role` (BYPASSRLS, NOLOGIN). The connecting login user is granted both via `GRANT … TO current_user`; web/worker SET LOCAL ROLE per transaction.
+- Row Level Security enabled on `users`, `web_sessions`, `audit_log` with policies keyed off `current_setting('app.current_user_id')`.
+- `lib/db/client.ts`: single `postgres-js` pool + drizzle wrapper.
+- `lib/db/withUser.ts`: transaction wrapper — `SET LOCAL ROLE web_role` + `set_config('app.current_user_id', userId, true)` so RLS auto-scopes every query inside.
+- `lib/db/migrate.ts`: migration runner. Worker invokes on boot. Web NEVER runs migrations (so two web replicas can't race the same DDL).
+- Worker bumps from heartbeat-only to: applies migrations on boot, then upserts `worker_heartbeats(id='singleton')` every 30s.
+- Dockerfile copies migrations to `/app/migrations` so the bundled worker can apply them at runtime (esbuild can't bundle .sql).
+
 ## [0.1.2] — 2026-05-22
 
 ### Fixed
