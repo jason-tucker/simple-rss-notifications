@@ -5,6 +5,25 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.5.0] — 2026-05-22 — PR5: Feeds + RSS poller + dispatcher
+
+### Added — the full RSS → email loop lands
+- **Schema** (migrations 0004 + 0005): `feeds`, `feed_items` (dedup ledger keyed on `(feed_id, guid)`), `routes` (feed→sink with destination), `dispatches` (per-(route, item) state machine: `pending`/`sent`/`failed`/`skipped`). RLS on all four; `feed_items` policy joins through `feeds` for ownership.
+- **`lib/ssrf.ts`** — DNS-resolving SSRF guard. Rejects RFC1918, loopback, link-local, cloud metadata (169.254.169.254), CGNAT, multicast, IPv4-mapped IPv6, `*.local`, `*.localhost`. Re-resolves on every fetch so DNS rebinding doesn't slip through. Pattern lifted from `squishybot/poller.ts`.
+- **`lib/rss/fetch.ts`** — conditional `GET` with `If-None-Match` / `If-Modified-Since`, 5 MiB body cap, 20 s timeout, gzip/deflate accept, custom UA. Returns a discriminated `not-modified` / `ok` / `error` union.
+- **`lib/rss/parse.ts`** — dep-free RSS 2.0 / Atom 1.0 parser. Handles `<item>` and `<entry>`, both Atom self-closing and RSS text `<link>` forms, CDATA, common HTML entities. GUID falls back to a hash of the link if missing.
+- **API**: `GET/POST /api/feeds`, `PATCH/DELETE /api/feeds/[id]`, `GET/POST /api/routes`, `PATCH/DELETE /api/routes/[id]`. All wrapped in `withUser`; create/update routes validate the URL through the SSRF guard up front.
+- **UI**: `/dashboard/feeds` (list with status / last poll / consecutive failures), `/dashboard/feeds/new` (label, URL, poll-interval, **backfill: none / last N posts / last X days + optional pacing one-every-N-seconds**), `/dashboard/feeds/[id]` (edit). `/dashboard/routes` (list with toggle/delete), `/dashboard/routes/new` (feed × sink × destination).
+- **Worker** now polls and dispatches:
+  - **`worker/rssPoller.ts`**: picks the next due feed (`ORDER BY last_polled_at ASC NULLS FIRST`), fetches with conditional GET, parses, bulk-inserts `feed_items` (`ON CONFLICT DO NOTHING` is the dedup primitive), enqueues `dispatches` for every enabled route. First-poll honors `backfill_mode`/`value`/`pace_seconds`; subsequent polls send everything new. Sets `backfill_mode='done'` after first poll so backfill applies once. ETag + Last-Modified stored for next fetch.
+  - **`worker/dispatcher.ts`**: atomic claim via `WITH picked / UPDATE … RETURNING` (single-statement lock for future multi-worker), loads sink, calls SMTP or Resend, marks `sent`/`failed`/`skipped`. Permanent failures (sink-incomplete, EAUTH, EENVELOPE, 4xx, decrypt-failed) go straight to `failed`; transient ones retry with exponential backoff (60 s → 5 min → 30 min → 1 h) up to 5 attempts.
+  - Heartbeat is now an independent timer so a slow poll/dispatch can't starve liveness reporting.
+- **Dashboard** home page surfaces feed / route / sink counts and a pending+failed dispatch summary.
+
+### Notes
+- The worker still picks work via a 2-second poll loop. Postgres `LISTEN/NOTIFY` for sub-second config propagation will land in a future PR; this is fine for v0.5.0 with at most a handful of feeds.
+- Worker bypasses RLS as table owner — by design, so it can poll all users' feeds and dispatch all users' work without juggling roles.
+
 ## [0.4.0] — 2026-05-22 — PR4: Encrypted sinks + test-send
 
 ### Added

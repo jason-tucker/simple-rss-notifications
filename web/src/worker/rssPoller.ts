@@ -1,0 +1,192 @@
+import { sql } from 'drizzle-orm'
+import { db } from '@/lib/db/client'
+import { fetchFeed } from '@/lib/rss/fetch'
+import { parseFeedBody } from '@/lib/rss/parse'
+
+type Logger = (msg: string, extra?: Record<string, unknown>) => void
+
+/**
+ * Pick the next due feed and poll it. Returns true if work was done so the
+ * caller can immediately try the next one (greedy drain); false if nothing
+ * was due, so the caller can sleep briefly.
+ *
+ * Worker runs as the table owner (BYPASSRLS by ownership) — sees every
+ * user's feeds. The dispatches we create are written with the feed's
+ * user_id so per-user RLS still works for the web view.
+ *
+ * Concurrency model: only ONE worker container runs in this stack
+ * (compose service `worker` is scale=1). If we ever scale, we'd add
+ * a `SELECT … FOR UPDATE SKIP LOCKED` to the picker query. Until
+ * then a simple `ORDER BY last_polled_at NULLS FIRST LIMIT 1` is fine.
+ */
+export async function pollOneDueFeed(log: Logger): Promise<boolean> {
+  const rows = await db.execute<{
+    id: string; user_id: string; url: string; label: string
+    poll_interval_s: number; etag: string | null; last_modified: string | null
+    backfill_mode: string; backfill_value: number; backfill_pace_seconds: number
+  }>(sql`
+    SELECT id, user_id, url, label, poll_interval_s, etag, last_modified,
+           backfill_mode, backfill_value, backfill_pace_seconds
+    FROM feeds
+    WHERE enabled
+      AND (last_polled_at IS NULL
+           OR last_polled_at < now() - (poll_interval_s::int * interval '1 second'))
+    ORDER BY last_polled_at ASC NULLS FIRST
+    LIMIT 1
+  `)
+  const feed = rows[0]
+  if (!feed) return false
+
+  await pollFeed(feed, log)
+  return true
+}
+
+interface FeedRow {
+  id: string; user_id: string; url: string; label: string
+  poll_interval_s: number; etag: string | null; last_modified: string | null
+  backfill_mode: string; backfill_value: number; backfill_pace_seconds: number
+}
+
+async function pollFeed(feed: FeedRow, log: Logger): Promise<void> {
+  const result = await fetchFeed(feed.url, { etag: feed.etag, lastModified: feed.last_modified })
+
+  if (result.kind === 'error') {
+    log('feed-fetch-failed', { feed_id: feed.id, label: feed.label, code: result.code, error: result.error })
+    await db.execute(sql`
+      UPDATE feeds SET
+        last_polled_at = now(),
+        last_error = ${result.error.slice(0, 500)},
+        last_error_at = now(),
+        consecutive_failures = consecutive_failures + 1
+      WHERE id = ${feed.id}::uuid
+    `)
+    return
+  }
+
+  if (result.kind === 'not-modified') {
+    log('feed-not-modified', { feed_id: feed.id, label: feed.label })
+    await db.execute(sql`
+      UPDATE feeds SET last_polled_at = now(), last_success_at = now(),
+        last_error = NULL, last_error_at = NULL, consecutive_failures = 0
+      WHERE id = ${feed.id}::uuid
+    `)
+    return
+  }
+
+  // Parse + dedup against feed_items + enqueue dispatches per matching route.
+  const items = parseFeedBody(result.body)
+  const isFirstPoll = feed.backfill_mode !== 'done'
+
+  // Insert all parsed items into feed_items (ON CONFLICT DO NOTHING — the
+  // unique (feed_id, guid) constraint dedups). Return the rows we just
+  // inserted so we can fan them out. Items that already existed do NOT
+  // get re-dispatched (their unique index conflict suppresses the row).
+  let newItems: Array<{ id: string; published_at: Date | null }> = []
+  if (items.length > 0) {
+    // Bulk insert via VALUES list. Build the args inline; postgres-js
+    // safely parameterizes.
+    const values = items.map((it) => sql`(
+      ${feed.id}::uuid, ${it.guid}, ${it.link}, ${it.title}, ${it.summary?.slice(0, 4000) ?? null}, ${it.publishedAt}
+    )`)
+    // Drizzle's sql.join lets us interpolate the comma-separated list.
+    const inserted = await db.execute<{ id: string; published_at: Date | null }>(sql`
+      INSERT INTO feed_items (feed_id, guid, link, title, summary, published_at)
+      VALUES ${sql.join(values, sql`, `)}
+      ON CONFLICT (feed_id, guid) DO NOTHING
+      RETURNING id, published_at
+    `)
+    newItems = inserted
+  }
+
+  // Pick which new items actually deserve dispatches based on backfill
+  // settings (first poll only). After first poll, ALL new items dispatch.
+  const itemsToDispatch = isFirstPoll
+    ? selectBackfillItems(newItems, feed)
+    : newItems
+
+  if (itemsToDispatch.length > 0) {
+    const routes = await db.execute<{ id: string; sink_type: string; sink_id: string; destination: string }>(sql`
+      SELECT id, sink_type, sink_id, destination
+      FROM routes
+      WHERE feed_id = ${feed.id}::uuid AND enabled
+    `)
+
+    if (routes.length > 0) {
+      // Schedule each (route, item) dispatch. Backfill pacing spreads
+      // them over time — first item at scheduled_at=now, second at
+      // now + pace, etc.
+      const pace = isFirstPoll && feed.backfill_pace_seconds > 0 ? feed.backfill_pace_seconds : 0
+      // newest-first in the items array; reverse so oldest goes out first
+      // (more natural reading order on a backfill blast).
+      const ordered = itemsToDispatch.slice().sort((a, b) => {
+        const at = a.published_at ? new Date(a.published_at).getTime() : 0
+        const bt = b.published_at ? new Date(b.published_at).getTime() : 0
+        return at - bt
+      })
+
+      const dispatchValues: ReturnType<typeof sql>[] = []
+      let idx = 0
+      for (const item of ordered) {
+        for (const route of routes) {
+          const offsetSec = pace * idx
+          dispatchValues.push(sql`(
+            ${route.id}::uuid, ${item.id}::uuid, ${feed.user_id}::uuid,
+            'pending', 0, now() + (${offsetSec}::int * interval '1 second')
+          )`)
+        }
+        idx++
+      }
+
+      if (dispatchValues.length > 0) {
+        await db.execute(sql`
+          INSERT INTO dispatches (route_id, feed_item_id, user_id, status, attempts, scheduled_at)
+          VALUES ${sql.join(dispatchValues, sql`, `)}
+          ON CONFLICT (route_id, feed_item_id) DO NOTHING
+        `)
+      }
+    }
+  }
+
+  // Mark feed polled. If this was the first poll, transition backfill_mode
+  // to 'done' so subsequent polls send everything new immediately.
+  await db.execute(sql`
+    UPDATE feeds SET
+      last_polled_at = now(),
+      last_success_at = now(),
+      last_error = NULL,
+      last_error_at = NULL,
+      consecutive_failures = 0,
+      etag = ${result.etag},
+      last_modified = ${result.lastModified},
+      backfill_mode = CASE WHEN backfill_mode <> 'done' THEN 'done' ELSE backfill_mode END
+    WHERE id = ${feed.id}::uuid
+  `)
+
+  log('feed-polled', {
+    feed_id: feed.id, label: feed.label,
+    parsed: items.length, new_items: newItems.length, dispatched: itemsToDispatch.length,
+    first_poll: isFirstPoll,
+  })
+}
+
+function selectBackfillItems<T extends { id: string; published_at: Date | null }>(
+  newItems: T[],
+  feed: FeedRow,
+): T[] {
+  if (feed.backfill_mode === 'none') return []
+  if (feed.backfill_mode === 'count') {
+    // Items come from RETURNING in arbitrary order; sort newest first to
+    // pick the freshest N.
+    const sorted = newItems.slice().sort((a, b) => {
+      const at = a.published_at ? new Date(a.published_at).getTime() : 0
+      const bt = b.published_at ? new Date(b.published_at).getTime() : 0
+      return bt - at
+    })
+    return sorted.slice(0, Math.max(0, feed.backfill_value))
+  }
+  if (feed.backfill_mode === 'days') {
+    const cutoff = Date.now() - feed.backfill_value * 24 * 60 * 60 * 1000
+    return newItems.filter((it) => it.published_at && new Date(it.published_at).getTime() >= cutoff)
+  }
+  return newItems // 'done' (shouldn't hit here on first poll) — pass through
+}

@@ -23,12 +23,23 @@ export default async function HomePage() {
   if (Math.floor(new Date(user.password_changed_at).getTime() / 1000) > session.iat) redirect('/login')
   if (user.must_change_password) redirect('/account/password')
 
-  // Sink count for the dashboard summary + incomplete banner.
-  const sinkStats = await withUser(session.uid, async (tx) => {
-    const rows = await tx.execute<{ total: number; incomplete: number }>(sql`
+  // Counts for the dashboard cards + incomplete banner.
+  const stats = await withUser(session.uid, async (tx) => {
+    const rows = await tx.execute<{
+      sinks_total: number; sinks_incomplete: number
+      feeds_total: number; feeds_enabled: number
+      routes_total: number; routes_enabled: number
+      dispatches_pending: number; dispatches_failed_24h: number
+    }>(sql`
       SELECT
-        (SELECT count(*)::int FROM sinks_smtp) + (SELECT count(*)::int FROM sinks_resend) AS total,
-        (SELECT count(*)::int FROM sinks_smtp WHERE incomplete) + (SELECT count(*)::int FROM sinks_resend WHERE incomplete) AS incomplete
+        (SELECT count(*)::int FROM sinks_smtp) + (SELECT count(*)::int FROM sinks_resend) AS sinks_total,
+        (SELECT count(*)::int FROM sinks_smtp WHERE incomplete) + (SELECT count(*)::int FROM sinks_resend WHERE incomplete) AS sinks_incomplete,
+        (SELECT count(*)::int FROM feeds) AS feeds_total,
+        (SELECT count(*)::int FROM feeds WHERE enabled) AS feeds_enabled,
+        (SELECT count(*)::int FROM routes) AS routes_total,
+        (SELECT count(*)::int FROM routes WHERE enabled) AS routes_enabled,
+        (SELECT count(*)::int FROM dispatches WHERE status = 'pending') AS dispatches_pending,
+        (SELECT count(*)::int FROM dispatches WHERE status = 'failed' AND dispatched_at > now() - interval '24 hours') AS dispatches_failed_24h
     `)
     return rows[0]!
   })
@@ -47,25 +58,37 @@ export default async function HomePage() {
         config files, no restarts on change.
       </p>
 
-      {sinkStats.incomplete > 0 && (
+      {stats.sinks_incomplete > 0 && (
         <div className="rounded border border-amber-700 bg-amber-950 px-3 py-2 text-sm text-amber-200">
-          <Link href="/dashboard/sinks" className="underline">{sinkStats.incomplete} incomplete sink{sinkStats.incomplete === 1 ? '' : 's'}</Link>
+          <Link href="/dashboard/sinks" className="underline">{stats.sinks_incomplete} incomplete sink{stats.sinks_incomplete === 1 ? '' : 's'}</Link>
           {' — paste the missing password or API key to enable.'}
         </div>
       )}
 
-      <nav className="grid sm:grid-cols-2 gap-3">
+      <nav className="grid sm:grid-cols-3 gap-3">
+        <Link href="/dashboard/feeds" className="rounded border border-zinc-800 bg-zinc-900 p-4 hover:border-zinc-700">
+          <div className="text-sm text-zinc-500">Feeds</div>
+          <div className="mt-1 text-lg">{stats.feeds_total}</div>
+          <div className="mt-1 text-xs text-zinc-500">{stats.feeds_enabled} enabled · RSS sources</div>
+        </Link>
+        <Link href="/dashboard/routes" className="rounded border border-zinc-800 bg-zinc-900 p-4 hover:border-zinc-700">
+          <div className="text-sm text-zinc-500">Routes</div>
+          <div className="mt-1 text-lg">{stats.routes_total}</div>
+          <div className="mt-1 text-xs text-zinc-500">{stats.routes_enabled} enabled · feed → sink</div>
+        </Link>
         <Link href="/dashboard/sinks" className="rounded border border-zinc-800 bg-zinc-900 p-4 hover:border-zinc-700">
           <div className="text-sm text-zinc-500">Sinks</div>
-          <div className="mt-1 text-lg">{sinkStats.total} configured</div>
+          <div className="mt-1 text-lg">{stats.sinks_total}</div>
           <div className="mt-1 text-xs text-zinc-500">SMTP + Resend destinations</div>
         </Link>
-        <div className="rounded border border-zinc-800 bg-zinc-900 p-4 opacity-50">
-          <div className="text-sm text-zinc-500">Feeds</div>
-          <div className="mt-1 text-lg">— coming in PR5</div>
-          <div className="mt-1 text-xs text-zinc-500">RSS sources + routes</div>
-        </div>
       </nav>
+
+      {(stats.dispatches_pending > 0 || stats.dispatches_failed_24h > 0) && (
+        <div className="text-xs text-zinc-500">
+          dispatch queue: {stats.dispatches_pending} pending
+          {stats.dispatches_failed_24h > 0 && <span className="text-red-400"> · {stats.dispatches_failed_24h} failed (24h)</span>}
+        </div>
+      )}
 
       <p className="text-xs text-zinc-600">v{BUILD_VERSION}</p>
     </div>
