@@ -8,17 +8,17 @@ import { isSameOrigin } from '@/lib/auth/csrf'
 import { encrypt } from '@/lib/crypto/aead'
 import { writeAudit, redactSecretFields } from '@/lib/audit'
 import { clientIp } from '@/lib/ratelimit'
+import { checkSafeOutboundUrl } from '@/lib/ssrf'
 
 export const dynamic = 'force-dynamic'
 
-const TypeParam = z.enum(['smtp', 'resend'])
+const TypeParam = z.enum(['smtp', 'resend', 'ntfy'])
 
 const SmtpPatch = z.object({
   label: z.string().min(1).max(100).optional(),
   host: z.string().min(1).max(255).optional(),
   port: z.number().int().min(1).max(65535).optional(),
   username: z.string().min(1).max(255).optional(),
-  /** Blank/omitted = keep current password. A non-empty string rotates it. */
   password: z.string().max(1024).optional(),
   from_email: z.string().email().optional(),
   from_name: z.string().max(100).nullable().optional(),
@@ -30,6 +30,16 @@ const ResendPatch = z.object({
   api_key: z.string().max(1024).optional(),
   from_email: z.string().email().optional(),
   from_name: z.string().max(100).nullable().optional(),
+})
+
+const NtfyPatch = z.object({
+  label: z.string().min(1).max(100).optional(),
+  server_url: z.string().url().max(2048).optional(),
+  topic: z.string().min(1).max(64).regex(/^[a-zA-Z0-9_-]+$/, 'topic must be alphanumeric, dash, or underscore').optional(),
+  token: z.string().max(1024).optional(),
+  default_priority: z.number().int().min(1).max(5).optional(),
+  default_tags: z.string().max(200).nullable().optional(),
+  include_link: z.boolean().optional(),
 })
 
 type Params = { type: string; id: string }
@@ -48,11 +58,8 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<Params> }) 
 
   if (typeResult.data === 'smtp') {
     const parsed = SmtpPatch.safeParse(json)
-    if (!parsed.success) {
-      return NextResponse.json({ error: 'bad-request', issues: parsed.error.issues }, { status: 400 })
-    }
+    if (!parsed.success) return NextResponse.json({ error: 'bad-request', issues: parsed.error.issues }, { status: 400 })
     return withUser(session.uid, async (tx) => {
-      // RLS scopes this UPDATE to rows owned by the current user automatically.
       const enc = parsed.data.password && parsed.data.password.length > 0 ? encrypt(parsed.data.password) : null
       const rows = await tx.execute<{ id: string }>(sql`
         UPDATE sinks_smtp SET
@@ -74,48 +81,72 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<Params> }) 
       `)
       if (!rows[0]) return NextResponse.json({ error: 'not-found' }, { status: 404 })
       void writeAudit({
-        actor_user_id: session.uid,
-        action: 'sink.update',
-        target_type: 'sink_smtp',
-        target_id: id,
-        after: redactSecretFields(parsed.data, ['password']),
-        via: 'web',
-        ip,
+        actor_user_id: session.uid, action: 'sink.update', target_type: 'sink_smtp', target_id: id,
+        after: redactSecretFields(parsed.data, ['password']), via: 'web', ip,
       })
       return NextResponse.json({ ok: true })
     })
   }
 
-  // type === 'resend'
-  const parsed = ResendPatch.safeParse(json)
-  if (!parsed.success) {
-    return NextResponse.json({ error: 'bad-request', issues: parsed.error.issues }, { status: 400 })
+  if (typeResult.data === 'resend') {
+    const parsed = ResendPatch.safeParse(json)
+    if (!parsed.success) return NextResponse.json({ error: 'bad-request', issues: parsed.error.issues }, { status: 400 })
+    return withUser(session.uid, async (tx) => {
+      const enc = parsed.data.api_key && parsed.data.api_key.length > 0 ? encrypt(parsed.data.api_key) : null
+      const rows = await tx.execute<{ id: string }>(sql`
+        UPDATE sinks_resend SET
+          label      = COALESCE(${parsed.data.label ?? null},      label),
+          from_email = COALESCE(${parsed.data.from_email ?? null}, from_email),
+          from_name  = ${parsed.data.from_name === undefined ? sql`from_name` : sql`${parsed.data.from_name}`},
+          api_key_ciphertext  = COALESCE(${enc?.ciphertext ?? null},  api_key_ciphertext),
+          api_key_iv          = COALESCE(${enc?.iv ?? null},          api_key_iv),
+          api_key_tag         = COALESCE(${enc?.tag ?? null},         api_key_tag),
+          api_key_key_version = COALESCE(${enc?.keyVersion ?? null},  api_key_key_version),
+          incomplete = CASE WHEN ${enc !== null} OR api_key_ciphertext IS NOT NULL THEN false ELSE incomplete END,
+          updated_at = now()
+        WHERE id = ${id}::uuid
+        RETURNING id
+      `)
+      if (!rows[0]) return NextResponse.json({ error: 'not-found' }, { status: 404 })
+      void writeAudit({
+        actor_user_id: session.uid, action: 'sink.update', target_type: 'sink_resend', target_id: id,
+        after: redactSecretFields(parsed.data, ['api_key']), via: 'web', ip,
+      })
+      return NextResponse.json({ ok: true })
+    })
   }
+
+  // type === 'ntfy'
+  const parsed = NtfyPatch.safeParse(json)
+  if (!parsed.success) return NextResponse.json({ error: 'bad-request', issues: parsed.error.issues }, { status: 400 })
+
+  if (parsed.data.server_url) {
+    const ssrf = await checkSafeOutboundUrl(parsed.data.server_url)
+    if (ssrf) return NextResponse.json({ error: ssrf, code: 'ssrf-blocked' }, { status: 400 })
+  }
+
   return withUser(session.uid, async (tx) => {
-    const enc = parsed.data.api_key && parsed.data.api_key.length > 0 ? encrypt(parsed.data.api_key) : null
+    const enc = parsed.data.token && parsed.data.token.length > 0 ? encrypt(parsed.data.token) : null
     const rows = await tx.execute<{ id: string }>(sql`
-      UPDATE sinks_resend SET
-        label      = COALESCE(${parsed.data.label ?? null},      label),
-        from_email = COALESCE(${parsed.data.from_email ?? null}, from_email),
-        from_name  = ${parsed.data.from_name === undefined ? sql`from_name` : sql`${parsed.data.from_name}`},
-        api_key_ciphertext  = COALESCE(${enc?.ciphertext ?? null},  api_key_ciphertext),
-        api_key_iv          = COALESCE(${enc?.iv ?? null},          api_key_iv),
-        api_key_tag         = COALESCE(${enc?.tag ?? null},         api_key_tag),
-        api_key_key_version = COALESCE(${enc?.keyVersion ?? null},  api_key_key_version),
-        incomplete = CASE WHEN ${enc !== null} OR api_key_ciphertext IS NOT NULL THEN false ELSE incomplete END,
+      UPDATE sinks_ntfy SET
+        label            = COALESCE(${parsed.data.label ?? null},            label),
+        server_url       = COALESCE(${parsed.data.server_url ?? null},       server_url),
+        topic            = COALESCE(${parsed.data.topic ?? null},            topic),
+        default_priority = COALESCE(${parsed.data.default_priority ?? null}, default_priority),
+        default_tags     = ${parsed.data.default_tags === undefined ? sql`default_tags` : sql`${parsed.data.default_tags}`},
+        include_link     = COALESCE(${parsed.data.include_link ?? null},     include_link),
+        token_ciphertext  = COALESCE(${enc?.ciphertext ?? null},  token_ciphertext),
+        token_iv          = COALESCE(${enc?.iv ?? null},          token_iv),
+        token_tag         = COALESCE(${enc?.tag ?? null},         token_tag),
+        token_key_version = COALESCE(${enc?.keyVersion ?? null},  token_key_version),
         updated_at = now()
       WHERE id = ${id}::uuid
       RETURNING id
     `)
     if (!rows[0]) return NextResponse.json({ error: 'not-found' }, { status: 404 })
     void writeAudit({
-      actor_user_id: session.uid,
-      action: 'sink.update',
-      target_type: 'sink_resend',
-      target_id: id,
-      after: redactSecretFields(parsed.data, ['api_key']),
-      via: 'web',
-      ip,
+      actor_user_id: session.uid, action: 'sink.update', target_type: 'sink_ntfy', target_id: id,
+      after: redactSecretFields(parsed.data, ['token']), via: 'web', ip,
     })
     return NextResponse.json({ ok: true })
   })
@@ -131,14 +162,18 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<Params> })
   if (!typeResult.success) return NextResponse.json({ error: 'bad-type' }, { status: 400 })
 
   const ip = clientIp(req)
-  const table = typeResult.data === 'smtp' ? sql`sinks_smtp` : sql`sinks_resend`
+  const table = typeResult.data === 'smtp' ? sql`sinks_smtp`
+              : typeResult.data === 'resend' ? sql`sinks_resend`
+              : sql`sinks_ntfy`
   return withUser(session.uid, async (tx) => {
     const rows = await tx.execute<{ id: string }>(sql`DELETE FROM ${table} WHERE id = ${id}::uuid RETURNING id`)
     if (!rows[0]) return NextResponse.json({ error: 'not-found' }, { status: 404 })
     void writeAudit({
       actor_user_id: session.uid,
       action: 'sink.delete',
-      target_type: typeResult.data === 'smtp' ? 'sink_smtp' : 'sink_resend',
+      target_type: typeResult.data === 'smtp' ? 'sink_smtp'
+                 : typeResult.data === 'resend' ? 'sink_resend'
+                 : 'sink_ntfy',
       target_id: id,
       via: 'web',
       ip,

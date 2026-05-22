@@ -5,6 +5,18 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.6.0] — 2026-05-22 — PR6: ntfy sink (RSS → push notifications)
+
+### Added
+- **`sinks_ntfy` table** (migration 0006) with `server_url` (default `https://ntfy.sh`), `topic`, optional encrypted bearer `token`, `default_priority` (1–5), `default_tags`, `include_link`. RLS policy in migration 0007. Encryption layout matches the other sinks (4-tuple `ciphertext / iv / tag / key_version`).
+- **`routes.destination` is now nullable.** ntfy routes carry no per-route destination — the dispatcher routes to `sink.server_url + sink.topic` directly. API `refine` enforces destination present for SMTP / Resend, absent for ntfy.
+- **`lib/ntfy/publish.ts`** — HTTP POST with ntfy's `Title:` / `Priority:` / `Tags:` / `Click:` / `Authorization:` headers. SSRF guard on every call (DNS-resolves so `server_url` can't aim at private addresses or cloud metadata). Header sanitizer strips CR/LF + non-ASCII to block header injection. Errors NEVER include the bearer token in the response.
+- **API**: `/api/sinks` POST + `/api/sinks/[type]/[id]` PATCH / DELETE + `/api/sinks/[type]/[id]/test` all gain an ntfy branch. SSRF re-checks on `server_url` create + update. Audit redacts the `token` field.
+- **UI**: `+ ntfy` button on the sinks list, ntfy section in `SinkForm` (server URL, topic, optional token, default priority dropdown, tags, include-link toggle), `SinkRow` shows `{server_url}/{topic} · priority {n}` + token-set badge. `NewRouteForm` hides the destination field when an ntfy sink is selected.
+- **Test button** on ntfy sinks sends a real push to the configured topic (no `to:` field — there's nowhere else to route an ntfy publish).
+- **Worker dispatcher** learns the ntfy branch. Title = item title (falls back to feed label); message = item summary trimmed to 1500 chars; Click = item link when `include_link=true`. ntfy 4xx errors are treated as permanent failures (bad token / topic name); 5xx + network errors retry with the same backoff ladder as the email sinks.
+- Dashboard home page sink count now includes ntfy.
+
 ## [0.5.2] — 2026-05-22
 
 ### Fixed

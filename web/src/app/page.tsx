@@ -32,8 +32,8 @@ export default async function HomePage() {
       dispatches_pending: number; dispatches_failed_24h: number
     }>(sql`
       SELECT
-        (SELECT count(*)::int FROM sinks_smtp) + (SELECT count(*)::int FROM sinks_resend) AS sinks_total,
-        (SELECT count(*)::int FROM sinks_smtp WHERE incomplete) + (SELECT count(*)::int FROM sinks_resend WHERE incomplete) AS sinks_incomplete,
+        (SELECT count(*)::int FROM sinks_smtp) + (SELECT count(*)::int FROM sinks_resend) + (SELECT count(*)::int FROM sinks_ntfy) AS sinks_total,
+        (SELECT count(*)::int FROM sinks_smtp WHERE incomplete) + (SELECT count(*)::int FROM sinks_resend WHERE incomplete) + (SELECT count(*)::int FROM sinks_ntfy WHERE incomplete) AS sinks_incomplete,
         (SELECT count(*)::int FROM feeds) AS feeds_total,
         (SELECT count(*)::int FROM feeds WHERE enabled) AS feeds_enabled,
         (SELECT count(*)::int FROM routes) AS routes_total,
@@ -79,7 +79,7 @@ export default async function HomePage() {
         <Link href="/dashboard/sinks" className="rounded border border-zinc-800 bg-zinc-900 p-4 hover:border-zinc-700">
           <div className="text-sm text-zinc-500">Sinks</div>
           <div className="mt-1 text-lg">{stats.sinks_total}</div>
-          <div className="mt-1 text-xs text-zinc-500">SMTP + Resend destinations</div>
+          <div className="mt-1 text-xs text-zinc-500">SMTP · Resend · ntfy destinations</div>
         </Link>
       </nav>
 

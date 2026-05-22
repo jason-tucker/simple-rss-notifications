@@ -14,7 +14,10 @@ export default async function NewSinkPage({
   if (!session) redirect('/login')
 
   const params = await searchParams
-  const type = params.type === 'resend' ? 'resend' : 'smtp'
+  const type: 'smtp' | 'resend' | 'ntfy' =
+    params.type === 'resend' ? 'resend'
+    : params.type === 'ntfy' ? 'ntfy'
+    : 'smtp'
 
   return (
     <div className="max-w-xl mx-auto space-y-6">

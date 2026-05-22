@@ -21,11 +21,15 @@ export default async function NewRoutePage() {
     const resend = await tx.execute<{ id: string; label: string; incomplete: boolean }>(sql`
       SELECT id, label, incomplete FROM sinks_resend ORDER BY label
     `)
+    const ntfy = await tx.execute<{ id: string; label: string; incomplete: boolean; topic: string }>(sql`
+      SELECT id, label, incomplete, topic FROM sinks_ntfy ORDER BY label
+    `)
     return {
       feeds,
       sinks: [
-        ...smtp.map((s) => ({ ...s, type: 'smtp' as const })),
-        ...resend.map((s) => ({ ...s, type: 'resend' as const })),
+        ...smtp.map((s) => ({ ...s, type: 'smtp' as const, topic: null as string | null })),
+        ...resend.map((s) => ({ ...s, type: 'resend' as const, topic: null as string | null })),
+        ...ntfy.map((s) => ({ ...s, type: 'ntfy' as const })),
       ],
     }
   })

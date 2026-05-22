@@ -87,11 +87,15 @@ export const routes = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     user_id: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     feed_id: uuid('feed_id').notNull().references(() => feeds.id, { onDelete: 'cascade' }),
-    /** Sink type discriminator: 'smtp' | 'resend' | 'ntfy' (PR9). */
+    /** Sink type discriminator: 'smtp' | 'resend' | 'ntfy'. */
     sink_type: text('sink_type').notNull(),
     sink_id: uuid('sink_id').notNull(),
-    /** Destination address baked in here, not on the sink — one sink can drive many destinations. */
-    destination: text('destination').notNull(),
+    /**
+     * Per-route override of where the sink delivers. NULL for ntfy
+     * (sink.topic is the destination); required email address for SMTP
+     * and Resend. API validation enforces this discrimination.
+     */
+    destination: text('destination'),
     label: text('label'),
     enabled: boolean('enabled').notNull().default(true),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
