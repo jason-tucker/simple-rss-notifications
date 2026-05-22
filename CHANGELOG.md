@@ -5,6 +5,11 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.5.1] — 2026-05-22
+
+### Fixed
+- Worker container crash-looped on `ERR_MODULE_NOT_FOUND: server-only`. The `server-only` import in shared lib files is marked external in the worker bundle (the marker is meaningless when bundling for the always-server worker), but Next's standalone trace doesn't include the `server-only` package at runtime because nothing in the Next runtime path actually needs it. Adding `server-only` as an explicit dep so the standalone tracer picks it up and copies it into the runtime image.
+
 ## [0.5.0] — 2026-05-22 — PR5: Feeds + RSS poller + dispatcher
 
 ### Added — the full RSS → email loop lands
