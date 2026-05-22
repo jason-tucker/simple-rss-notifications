@@ -5,6 +5,11 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.2.1] — 2026-05-22
+
+### Fixed
+- Worker heartbeat upserts failed with `write CONNECTION_ENDED` because `migrate.ts` had a standalone CLI guard (`if (import.meta.url === file://${process.argv[1]})`) that false-positived inside the bundled worker — esbuild rewrites `import.meta.url` to the bundle path, which matches `process.argv[1]`, so the guard called `pg.end()` right after migrations finished and killed the pool before the heartbeat loop could use it. Moved the CLI entry to `web/scripts/migrate.ts` (tsx-only, never bundled).
+
 ## [0.2.0] — 2026-05-22 — PR2: DB foundation
 
 ### Added

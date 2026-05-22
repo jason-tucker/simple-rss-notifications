@@ -26,15 +26,8 @@ export async function runMigrations(): Promise<void> {
   await migrate(db, { migrationsFolder: folder })
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  runMigrations()
-    .then(async () => {
-      console.log('migrations applied')
-      await pg.end()
-    })
-    .catch(async (err) => {
-      console.error('migration failed:', err)
-      await pg.end()
-      process.exit(1)
-    })
-}
+// NOTE: do NOT add a standalone `if (import.meta.url === ...)` entry-point
+// here. esbuild bundles this file into dist/worker/index.js, and at runtime
+// import.meta.url + process.argv[1] both resolve to the bundle path — the
+// guard false-positives and pg.end() races against the worker's main loop.
+// The CLI entry lives in scripts/migrate.ts instead (tsx-only, never bundled).
