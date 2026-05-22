@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm'
+import { sql, type SQL } from 'drizzle-orm'
 import { db } from '@/lib/db/client'
 import { fetchFeed } from '@/lib/rss/fetch'
 import { parseFeedBody } from '@/lib/rss/parse'
@@ -124,7 +124,7 @@ async function pollFeed(feed: FeedRow, log: Logger): Promise<void> {
         return at - bt
       })
 
-      const dispatchValues: ReturnType<typeof sql>[] = []
+      const dispatchValues: SQL[] = []
       let idx = 0
       for (const item of ordered) {
         for (const route of routes) {
