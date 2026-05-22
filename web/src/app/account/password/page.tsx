@@ -14,8 +14,8 @@ export default function ChangePasswordPage() {
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
-    if (next.length < 12) {
-      setError('New password must be at least 12 characters.')
+    if (next.length < 8) {
+      setError('New password must be at least 8 characters.')
       return
     }
     if (next !== confirm) {
@@ -50,7 +50,7 @@ export default function ChangePasswordPage() {
     <div className="max-w-sm mx-auto space-y-6">
       <h1 className="text-2xl font-semibold">Change password</h1>
       <p className="text-sm text-zinc-400">
-        Set a new password before you can use the dashboard. Minimum 12 characters.
+        Set a new password before you can use the dashboard. Minimum 8 characters.
       </p>
       <form onSubmit={submit} className="space-y-3">
         <label className="block">
