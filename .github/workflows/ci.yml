@@ -3,6 +3,13 @@ name: ci
 on:
   pull_request:
     branches: [main]
+    # Trigger on initial open, new pushes, reopen, AND when a draft is
+    # marked ready-for-review. Combined with the per-job `if: !draft`
+    # guards below, this means a draft PR pushes new commits without
+    # firing a CI run — so iterating through type errors doesn't email
+    # the repo owner. The single CI run happens when the PR is marked
+    # ready (or opened non-draft).
+    types: [opened, synchronize, reopened, ready_for_review]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -11,6 +18,7 @@ concurrency:
 jobs:
   web:
     runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
     defaults:
       run:
         working-directory: web
@@ -46,6 +54,7 @@ jobs:
 
   docker-build:
     runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
     steps:
       - uses: actions/checkout@v4
 
