@@ -9,7 +9,8 @@ export function Footer() {
         rel="noopener noreferrer"
         className="hover:text-zinc-700 dark:hover:text-zinc-300"
       >
-        simple-rss-notifications v{BUILD_VERSION} · {GIT_SHA}
+        <span className="bg-gradient-to-r from-sky-400 via-violet-400 to-fuchsia-400 bg-clip-text text-transparent">Euphoric</span>
+        <span> Notify v{BUILD_VERSION} · {GIT_SHA}</span>
       </a>
     </footer>
   )

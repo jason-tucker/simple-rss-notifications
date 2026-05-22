@@ -2,9 +2,18 @@ import type { Metadata } from 'next'
 import { Footer } from '@/components/Footer'
 import './globals.css'
 
+/**
+ * Product brand is "Euphoric Notify" (sibling to Euphoric FM / Euphoric Media).
+ * The repo / package / Docker images stay `simple-rss-notifications` per the
+ * brand-vs-codebase split — only user-visible surfaces show the product name.
+ */
 export const metadata: Metadata = {
-  title: 'simple-rss-notifications',
-  description: 'RSS → email / ntfy notification bridge',
+  title: {
+    default: 'Euphoric Notify',
+    template: '%s · Euphoric Notify',
+  },
+  description: 'RSS → email & ntfy notification bridge. Part of the Euphoric family.',
+  applicationName: 'Euphoric Notify',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

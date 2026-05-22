@@ -1,10 +1,15 @@
-# simple-rss-notifications
+# simple-rss-notifications  ·  *Euphoric Notify*
+
+> Branded as **Euphoric Notify** (sibling to Euphoric FM and Euphoric Media).
+> The GitHub repo / package / Docker image names stay `simple-rss-notifications`
+> for stability; everything user-facing in the UI shows the Euphoric Notify
+> brand.
 
 A self-hosted, multi-user notification bridge that turns **RSS feeds → email or ntfy**, and **ntfy → email**. Configuration is entirely UI-driven — no editing files on the server, no restarts when you add a feed or change a credential.
 
 ## Status
 
-**v0.1.0 — scaffold.** Boots a Caddy + Next.js + Postgres + worker stack. No auth, no feeds yet — those land PR-by-PR per the [project plan](https://github.com/users/jason-tucker/projects/6).
+Active. See [CHANGELOG.md](./CHANGELOG.md) for what's shipped. PR-by-PR plan tracked on the [project board](https://github.com/users/jason-tucker/projects/6).
 
 ## What it does (target)
 

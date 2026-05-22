@@ -84,7 +84,7 @@ export async function dispatchOnePending(log: Logger): Promise<boolean> {
     '',
     link,
     '',
-    `— from ${job.feed_label} (simple-rss-notifications)`,
+    `— from ${job.feed_label} · Euphoric Notify`,
   ].filter(Boolean).join('\n')
 
   let result

@@ -5,6 +5,22 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.7.0] — 2026-05-22 — PR7: Euphoric Notify rebrand
+
+### Added
+- **Product brand: Euphoric Notify** (sibling to Euphoric FM / Euphoric Media). Source logo `http://i.jasontucker.me/o0hnfxw8.png` resized via sharp to `app/icon.png` (32×32 favicon — Next App Router auto-wires the `<link rel="icon">`), `app/apple-icon.png` (180×180 — Next auto-wires the touch icon), `public/logo.png` (512), `public/logo-192.png` (192).
+- **`<Brand />`** component (`web/src/components/Brand.tsx`) renders the gradient mark + a sky→violet→fuchsia gradient wordmark. Used on the home header and the login screen.
+- **Layout metadata**: `title.default = 'Euphoric Notify'`, `title.template = '%s · Euphoric Notify'`, `applicationName = 'Euphoric Notify'`. Browser tabs and the OS-level webapp name reflect the brand.
+- **Login page** now leads with the logo + gradient wordmark and a sign-in subtitle.
+- **Home page header** switched from a plain `simple-rss-notifications` h1 to the `<Brand />` mark.
+- **Footer** shows `Euphoric Notify v<x.y.z> · <sha>` (gradient on the word "Euphoric") linked to the matching GitHub release.
+- **502 fallback** (`landing/502.html`) rebranded with gradient wordmark + matching meta tags.
+- **Outbound notification signoff** changed from `— from <feed> (simple-rss-notifications)` to `— from <feed> · Euphoric Notify` in the dispatcher's text body.
+- **README** hero now reads `simple-rss-notifications · *Euphoric Notify*` with a callout explaining the codebase-vs-brand split — repo / package / Docker images keep the technical name; only user-facing surfaces show the product brand.
+
+### Notes
+- GitHub repo name, package.json `name`, and GHCR image paths are intentionally NOT renamed — that would invalidate the cloudflared ingress, install.sh URLs, and watchtower auto-pull paths. The "Euphoric Notify" surface is purely the running product.
+
 ## [0.6.0] — 2026-05-22 — PR6: ntfy sink (RSS → push notifications)
 
 ### Added
