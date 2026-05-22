@@ -6,6 +6,7 @@ import { isSameOrigin } from '@/lib/auth/csrf'
 import { withUser } from '@/lib/db/withUser'
 import { writeAudit } from '@/lib/audit'
 import { clientIp, rateLimit } from '@/lib/ratelimit'
+import { notifyDispatchesChanged } from '@/lib/db/notify'
 
 export const dynamic = 'force-dynamic'
 
@@ -62,6 +63,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<Params> }) {
       via: 'web',
       ip,
     })
+    void notifyDispatchesChanged()
     return NextResponse.json({ ok: true })
   })
 }

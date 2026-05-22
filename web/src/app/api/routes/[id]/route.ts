@@ -7,6 +7,7 @@ import { isSameOrigin } from '@/lib/auth/csrf'
 import { withUser } from '@/lib/db/withUser'
 import { writeAudit } from '@/lib/audit'
 import { clientIp } from '@/lib/ratelimit'
+import { notifyFeedsChanged } from '@/lib/db/notify'
 
 export const dynamic = 'force-dynamic'
 
@@ -44,6 +45,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<Params> }) 
       actor_user_id: session.uid, action: 'route.update', target_type: 'route',
       target_id: id, after: parsed.data, via: 'web', ip,
     })
+    void notifyFeedsChanged()
     return NextResponse.json({ ok: true })
   })
 }
@@ -64,6 +66,7 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<Params> })
       actor_user_id: session.uid, action: 'route.delete', target_type: 'route',
       target_id: id, via: 'web', ip,
     })
+    void notifyFeedsChanged()
     return NextResponse.json({ ok: true })
   })
 }

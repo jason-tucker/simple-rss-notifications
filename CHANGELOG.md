@@ -5,6 +5,26 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.10.0] — 2026-05-22 — PR10: Perf pass
+
+### Changed
+- **`/dashboard/sinks`** and **`/dashboard/activity`** fan their 4-way page queries out across parallel `withUser()` transactions. `Promise.all` inside a single drizzle tx doesn't help (postgres-js serializes queries on a single connection); spawning N transactions gives N connections in parallel. Wall-clock drops from sum(queries) → max(queries).
+- **Worker idle wakeup is now event-driven.** New `lib/db/notify.ts` emits `pg_notify('feeds_changed', ...)` after every feed/route/destination CRUD, and `pg_notify('dispatches_changed', ...)` after a retry. `worker/notify.ts` holds a dedicated LISTEN connection and exposes a `waitForKick()` Promise that the work loop races against the idle timeout — sub-second pickup of UI changes instead of waiting up to the full sleep interval.
+- **Idle sleep bumped 2s → 5s.** With LISTEN/NOTIFY waking us on real changes, the safety-net poll can be longer; saves a few DB round-trips per minute when there's no work.
+
+### Added
+- **Index `dispatches(status, created_at DESC)`** (migration 0010) so the activity page's `WHERE status=? ORDER BY created_at DESC LIMIT 100` doesn't full-scan once dispatch history grows.
+- **Index `feed_items(feed_id)`** for the activity-by-feed filter join. Both are no-ops on a small DB but pay back fast.
+
+### Caching
+- **Caddy adds `Cache-Control: public, max-age=31536000, immutable`** for `/_next/static/*`. Next.js fingerprints those filenames so they're safe to cache forever — browser stops re-downloading hashed JS/CSS bundles between page loads.
+- Caddy adds `max-age=86400` for the favicon/icon routes (`/icon`, `/icon.png`, `/apple-icon`, `/apple-icon.png`, `/favicon.ico`).
+
+### Notes
+- Worker's LISTEN connection is its own postgres-js client (`max:1`, `idle_timeout:0`) because LISTEN blocks the connection. postgres-js auto-reconnects but does NOT replay LISTEN on reconnect — the subscriber's `onConnect` re-issues the subscription on every (re)connect.
+- NOTIFY payloads are empty strings. We never put PII or secrets in them (Postgres caps NOTIFY at 8 KiB anyway).
+- Retry failures (NOTIFY emit failure) are non-fatal — the worker's 5s safety-net poll catches the change either way.
+
 ## [0.9.0] — 2026-05-22 — PR9: Activity dashboard + retry
 
 ### Added

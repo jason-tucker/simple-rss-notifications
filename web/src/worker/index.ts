@@ -28,10 +28,15 @@ import { runMigrations } from '@/lib/db/migrate'
 import { bootstrap } from './bootstrap'
 import { pollOneDueFeed } from './rssPoller'
 import { dispatchOnePending } from './dispatcher'
+import { startNotifySubscriber, sleepUntilKickOrMs, type NotifySubscriber } from './notify'
 
 const HEARTBEAT_INTERVAL_MS = 30_000
-const IDLE_SLEEP_MS = 2_000          // when no work was found
-const ERROR_SLEEP_MS = 5_000         // after a tick that threw
+// Max time the work loop sleeps when nothing's pending. NOTIFY from the
+// web side wakes us sooner — this is the safety-net interval for cron-
+// triggered polling cadence and for catching feeds whose poll_interval_s
+// just elapsed.
+const IDLE_SLEEP_MS = 5_000
+const ERROR_SLEEP_MS = 5_000
 const HEARTBEAT_ID = 'singleton'
 
 let shuttingDown = false
@@ -76,13 +81,16 @@ function startHeartbeat() {
   setTimeout(tick, 0).unref()
 }
 
-async function workLoop() {
+async function workLoop(sub: NotifySubscriber) {
   while (!shuttingDown) {
     try {
       const didPoll = await pollOneDueFeed(log)
       const didDispatch = await dispatchOnePending(log)
       if (!didPoll && !didDispatch) {
-        await new Promise((r) => setTimeout(r, IDLE_SLEEP_MS))
+        // Sleep up to IDLE_SLEEP_MS — but wake immediately if a NOTIFY
+        // arrives (UI added a feed, hit Retry, etc.). Sub-second
+        // propagation without burning CPU on a tight poll loop.
+        await sleepUntilKickOrMs(sub, IDLE_SLEEP_MS)
       }
     } catch (err) {
       log('work-loop-error', { err: err instanceof Error ? err.message : String(err) })
@@ -99,8 +107,10 @@ async function main() {
 
   await bootstrap(log)
 
+  const sub = await startNotifySubscriber(log)
+
   startHeartbeat()
-  await workLoop()
+  await workLoop(sub)
 }
 
 main().catch((err) => {

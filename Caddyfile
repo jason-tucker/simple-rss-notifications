@@ -14,6 +14,17 @@
 :{$PORT:6082} {
   encode gzip zstd
 
+  # Next.js fingerprints filenames under /_next/static (e.g. .../[hash].js),
+  # so the contents at a given URL never change. Tell the browser to cache
+  # forever — saves a re-download on every page load.
+  @nextStatic path /_next/static/*
+  header @nextStatic Cache-Control "public, max-age=31536000, immutable"
+
+  # Same idea for the favicon + Next-served icon routes — they're keyed
+  # by app/icon.png etc.; if the file changes, the URL hash changes.
+  @nextIcons path /icon /icon.png /apple-icon /apple-icon.png /favicon.ico
+  header @nextIcons Cache-Control "public, max-age=86400"
+
   # Fall back to a minimal landing page if Next is down or returning 5xx,
   # so the user never sees a blank Cloudflare error.
   handle_errors {
