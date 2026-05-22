@@ -2,6 +2,7 @@
 
 import { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { Brand } from '@/components/Brand'
 
 function LoginForm() {
   const router = useRouter()
@@ -82,7 +83,14 @@ function LoginForm() {
 export default function LoginPage() {
   return (
     <div className="max-w-sm mx-auto space-y-6">
-      <h1 className="text-2xl font-semibold">Log in</h1>
+      <div className="flex flex-col items-center gap-3 text-center">
+        <Brand size={64} withWordmark={false} />
+        <h1 className="text-2xl font-semibold">
+          <span className="bg-gradient-to-r from-sky-400 via-violet-400 to-fuchsia-400 bg-clip-text text-transparent">Euphoric</span>
+          <span className="text-zinc-100"> Notify</span>
+        </h1>
+        <p className="text-sm text-zinc-500">Sign in to manage your feeds and notifications.</p>
+      </div>
       {/* Suspense required around useSearchParams() in Next 15 so prerender doesn't bail. */}
       <Suspense fallback={<div className="text-sm text-zinc-500">Loading…</div>}>
         <LoginForm />

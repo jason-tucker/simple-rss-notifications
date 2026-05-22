@@ -6,6 +6,7 @@ import { readSessionCookie } from '@/lib/auth/session'
 import { withUser } from '@/lib/db/withUser'
 import { BUILD_VERSION } from '@/lib/version'
 import { LogoutButton } from '@/components/LogoutButton'
+import { Brand } from '@/components/Brand'
 
 // Reading cookies + DB inside the page means this must be dynamic — no static
 // rendering. (Next 15 would error out if it tried to statically render this.)
@@ -46,15 +47,15 @@ export default async function HomePage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex items-center justify-between">
-        <h1 className="text-3xl font-semibold">simple-rss-notifications</h1>
+      <header className="flex items-center justify-between gap-4 flex-wrap">
+        <Brand size={40} className="text-2xl" />
         <div className="flex items-center gap-3 text-sm text-zinc-400">
           <span>Signed in as <span className="text-zinc-200">{user.username}</span></span>
           <LogoutButton />
         </div>
       </header>
       <p className="text-zinc-400">
-        RSS → email / ntfy bridge. Configure everything in the UI — no server-side
+        RSS → email &amp; ntfy bridge. Configure everything in the UI — no server-side
         config files, no restarts on change.
       </p>
 
