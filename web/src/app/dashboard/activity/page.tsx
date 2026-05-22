@@ -21,20 +21,21 @@ export default async function ActivityPage({
   const status = params.status && VALID_STATUS.has(params.status) ? params.status : null
   const feedFilter = params.feed && /^[0-9a-f-]{36}$/.test(params.feed) ? params.feed : null
 
-  interface RawRow {
-    id: string; status: string; attempts: number
-    scheduled_at: Date; dispatched_at: Date | null
-    error: string | null; provider_message_id: string | null
-    created_at: Date
-    route_id: string; route_label: string | null
-    feed_id: string; feed_label: string
-    item_title: string | null; item_link: string | null; item_published_at: Date | null
-    sink_type: string; sink_id: string; destination: string | null
-    sink_label: string | null
-  }
-
   const { rows, total, feeds, counts } = await withUser(session.uid, async (tx) => {
-    const rows = await tx.execute<RawRow>(sql`
+    // Inline type literal because drizzle's tx.execute<T> requires
+    // T extends Record<string, unknown>, which named interfaces don't
+    // satisfy implicitly (no index signature).
+    const rows = await tx.execute<{
+      id: string; status: string; attempts: number
+      scheduled_at: Date; dispatched_at: Date | null
+      error: string | null; provider_message_id: string | null
+      created_at: Date
+      route_id: string; route_label: string | null
+      feed_id: string; feed_label: string
+      item_title: string | null; item_link: string | null; item_published_at: Date | null
+      sink_type: string; sink_id: string; destination: string | null
+      sink_label: string | null
+    }>(sql`
       SELECT d.id, d.status, d.attempts, d.scheduled_at, d.dispatched_at,
              d.error, d.provider_message_id, d.created_at,
              r.id AS route_id, r.label AS route_label,
