@@ -21,9 +21,9 @@ export default async function ActivityPage({
   const status = params.status && VALID_STATUS.has(params.status) ? params.status : null
   const feedFilter = params.feed && /^[0-9a-f-]{36}$/.test(params.feed) ? params.feed : null
 
-  // Four independent read queries fan out across separate connections via
+  // Five independent read queries fan out across separate connections via
   // parallel withUser() calls (postgres-js serializes within one tx).
-  const [rows, totalRows, feeds, counts] = await Promise.all([
+  const [rows, totalRows, feeds, counts, unhealthy] = await Promise.all([
     withUser(session.uid, (tx) => tx.execute<{
       id: string; status: string; attempts: number
       scheduled_at: Date; dispatched_at: Date | null
@@ -68,6 +68,15 @@ export default async function ActivityPage({
     withUser(session.uid, (tx) => tx.execute<{ status: string; c: number }>(sql`
       SELECT status, count(*)::int AS c FROM dispatches GROUP BY status
     `)),
+    withUser(session.uid, (tx) => tx.execute<{
+      id: string; label: string; url: string
+      consecutive_failures: number; last_error: string | null; last_error_at: Date | null
+    }>(sql`
+      SELECT id, label, url, consecutive_failures, last_error, last_error_at
+      FROM feeds
+      WHERE consecutive_failures > 0
+      ORDER BY consecutive_failures DESC
+    `)),
   ])
   const total = totalRows[0]?.c ?? 0
 
@@ -81,6 +90,35 @@ export default async function ActivityPage({
           Every dispatch through Euphoric Notify — what got sent, where, and any failures.
         </p>
       </header>
+
+      {unhealthy.length > 0 && (
+        <div className="rounded border border-red-900 bg-red-950 p-3 space-y-2 text-sm">
+          <p className="font-medium text-red-200">
+            {unhealthy.length} feed{unhealthy.length === 1 ? '' : 's'} can&apos;t be fetched
+          </p>
+          <p className="text-xs text-red-300">
+            These are <em>poll</em> failures (the worker can&apos;t reach the URL) — they don&apos;t show up
+            below as dispatches because no items are being read in the first place. Fix the feed URL
+            to clear them.
+          </p>
+          <ul className="space-y-1.5 text-xs">
+            {unhealthy.map((f) => (
+              <li key={f.id} className="rounded bg-red-950/60 p-2">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <Link href={`/dashboard/feeds/${f.id}`} className="font-medium text-red-100 hover:underline">
+                    {f.label}
+                  </Link>
+                  <span className="text-red-300">{f.consecutive_failures} consecutive failure{f.consecutive_failures === 1 ? '' : 's'}</span>
+                </div>
+                <code className="mt-1 block break-all text-red-300/80">{f.url}</code>
+                {f.last_error && (
+                  <p className="mt-1 text-red-400">last error: {f.last_error}</p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span className="text-zinc-500">Filter:</span>
