@@ -5,6 +5,11 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.12.2] — 2026-05-23
+
+### Fixed
+- Worker crashed every successful poll with `Received an instance of Date` because the bulk `INSERT INTO feed_items` was interpolating `it.publishedAt` (a JS Date from the parser) as a SQL parameter. postgres-js's protocol-level parameter encoder hit `Buffer.byteLength(date)` and threw — looks like the bundled timestamptz serializer doesn't ToString the Date before sending. Workaround: explicitly `.toISOString()` the value and add an `::timestamptz` cast on the SQL side. Sidesteps whichever serializer mis-fired. Stack trace (added in v0.12.1) made the call site obvious.
+
 ## [0.12.1] — 2026-05-23
 
 ### Fixed (diagnostic)
