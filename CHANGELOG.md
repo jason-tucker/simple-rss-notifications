@@ -5,6 +5,20 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.12.0] — 2026-05-22 — PR12: Feed Health banner
+
+### Added
+- **Feed Health banner** at the top of `/dashboard/activity` listing every feed with `consecutive_failures > 0`. Shows label, URL, failure count, and `last_error`. Each entry links to the feed's edit page so you can fix the URL or disable.
+- **Smaller red banner on the dashboard home** ("N feed(s) failing to poll") that links to `/dashboard/activity` where the full list lives.
+
+### Why
+- "Why are there no dispatches in Activity?" — the worker's poll failures live on `feeds.consecutive_failures` / `feeds.last_error`, **not** on `dispatches`. The activity table is per-item-per-destination, so a feed that never fetches successfully has zero rows there. Previously that meant fetch-level failures were only visible by clicking into each feed individually.
+- Closes that UX gap by surfacing fetch failures at the same place users go to ask "what's happening with my notifications?"
+
+### Notes
+- This is presentation-only — no schema changes, no dispatcher changes. The existing `consecutive_failures` increment in the poller is what feeds the banner.
+- Banner shows enabled and disabled feeds alike; if you don't want noise, disable the feed.
+
 ## [0.11.0] — 2026-05-22 — PR11: "Send latest item" test per destination
 
 ### Added

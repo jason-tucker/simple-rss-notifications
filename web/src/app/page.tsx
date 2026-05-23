@@ -29,6 +29,7 @@ export default async function HomePage() {
     const rows = await tx.execute<{
       sinks_total: number; sinks_incomplete: number
       feeds_total: number; feeds_enabled: number
+      feeds_unhealthy: number
       routes_total: number; routes_enabled: number
       dispatches_pending: number; dispatches_failed_24h: number
     }>(sql`
@@ -37,6 +38,7 @@ export default async function HomePage() {
         (SELECT count(*)::int FROM sinks_smtp WHERE incomplete) + (SELECT count(*)::int FROM sinks_resend WHERE incomplete) + (SELECT count(*)::int FROM sinks_ntfy WHERE incomplete) + (SELECT count(*)::int FROM sinks_discord_webhook WHERE incomplete) AS sinks_incomplete,
         (SELECT count(*)::int FROM feeds) AS feeds_total,
         (SELECT count(*)::int FROM feeds WHERE enabled) AS feeds_enabled,
+        (SELECT count(*)::int FROM feeds WHERE consecutive_failures > 0) AS feeds_unhealthy,
         (SELECT count(*)::int FROM routes) AS routes_total,
         (SELECT count(*)::int FROM routes WHERE enabled) AS routes_enabled,
         (SELECT count(*)::int FROM dispatches WHERE status = 'pending') AS dispatches_pending,
@@ -63,6 +65,13 @@ export default async function HomePage() {
         <div className="rounded border border-amber-700 bg-amber-950 px-3 py-2 text-sm text-amber-200">
           <Link href="/dashboard/sinks" className="underline">{stats.sinks_incomplete} incomplete sink{stats.sinks_incomplete === 1 ? '' : 's'}</Link>
           {' — paste the missing password or API key to enable.'}
+        </div>
+      )}
+
+      {stats.feeds_unhealthy > 0 && (
+        <div className="rounded border border-red-900 bg-red-950 px-3 py-2 text-sm text-red-200">
+          <Link href="/dashboard/activity" className="underline">{stats.feeds_unhealthy} feed{stats.feeds_unhealthy === 1 ? '' : 's'} failing to poll</Link>
+          {' — the worker can\'t fetch the URL. Check the feed for the underlying error.'}
         </div>
       )}
 
