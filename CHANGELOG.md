@@ -5,6 +5,28 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.13.0] — 2026-05-23 — PR13: notification formatting overhaul
+
+### Added — `lib/rss/format.ts`
+- **`htmlToPlainText`** — converts RSS-shipped HTML to readable plain text. Handles `<p>` / `<br>` / `<h1>`-`<h6>` / `<li>` / `<blockquote>` as block breaks, `<a href="X">label</a>` becomes `label (X)` so links survive, named entities (`&nbsp;`, `&mdash;`, etc.) + numeric entities decode, `<script>` / `<style>` / `<svg>` dropped entirely, whitespace collapsed.
+- **`sanitizeHtmlForEmail`** — allowlist sanitizer for the HTML email body. Drops `<script>` / `<style>` / `<iframe>` / `<object>` / `<embed>` with their content, strips `on*` event handlers, rejects `href` / `src` values that aren't `http(s)` / `mailto:` / relative, keeps a curated set of formatting / heading / list / table / image tags. Adds `rel="noopener noreferrer nofollow" target="_blank"` to surviving anchors.
+- **`htmlToDiscordMarkdown`** — `**bold**`, `*italic*`, `` `code` ``, `[label](url)`, `> blockquote`, `- bullets`, ```` ```code blocks``` ````. Headings render as bold paragraphs; bare URLs use Discord's `<url>` auto-embed form.
+- **`buildFeedItemBody`** — returns `{ text, html }` for email. HTML body includes a heading, sanitized summary, clickable link, hr separator, small footer.
+- **`buildDiscordEmbed`** — returns a Discord rich embed: `title` (clickable via `url`), markdown `description`, `author.name = feed label`, `timestamp = published_at`, footer "Euphoric Notify", brand-violet color `0xa78bfa`. Discord limits respected (title 256, description 3500 to stay under the 6000 combined cap).
+- **`buildNtfyBody`** — plain-text from HTML, trimmed to 1500 chars on a word boundary.
+- **`truncate`** — graceful word-boundary cut with ellipsis.
+
+### Changed
+- **Dispatcher** now calls the right builder per sink type. SMTP + Resend get both `text` + `html` bodies; ntfy gets trimmed plain text; Discord (when `use_embeds=true`) gets the rich embed, (when `use_embeds=false`) markdown content.
+- **`/api/routes/[id]/destinations/[destId]/test-with-latest`** uses the same builders so the test button shows the exact final rendering.
+- **Discord webhook publisher** now accepts a pre-built `embed` arg that overrides the minimal default shape.
+- **`feed_items.summary` storage cap** bumped 4 KB → 200 KB. The old slice was cutting mid-word on long bulletins like UniFi advisories; 200 KB is enough for any practical RSS item while still bounding against a hostile source. Existing rows aren't backfilled — they'll re-populate on the next successful poll per feed.
+
+### Why
+- Plain-text emails were arriving with raw HTML tags (`<p>`, `<strong>`, `&nbsp;`, etc.) visible because the RSS source's `<description>` is HTML and we were piping it through unchanged.
+- Discord embeds were getting plain-text descriptions (no markdown / links) so they looked flat.
+- ntfy push bodies had angle brackets on phone notifications.
+
 ## [0.12.2] — 2026-05-23
 
 ### Fixed

@@ -9,6 +9,7 @@ import { rateLimit, clientIp } from '@/lib/ratelimit'
 import { sendViaSmtp, sendViaResend } from '@/lib/email/send'
 import { publishToNtfy } from '@/lib/ntfy/publish'
 import { publishToDiscord } from '@/lib/discord/webhook'
+import { buildFeedItemBody, buildDiscordEmbed, buildNtfyBody } from '@/lib/rss/format'
 import type { SinkSmtp, SinkResend, SinkNtfy, SinkDiscordWebhook } from '@/lib/db/schema'
 
 export const dynamic = 'force-dynamic'
@@ -59,16 +60,18 @@ export async function POST(req: NextRequest, ctx: { params: Promise<Params> }) {
       feed_id: string; feed_label: string
       item_id: string | null; item_title: string | null
       item_link: string | null; item_summary: string | null
+      item_published_at: Date | null
     }>(sql`
       SELECT rd.sink_type, rd.sink_id, rd.destination, rd.enabled,
              f.id AS feed_id, f.label AS feed_label,
              fi.id AS item_id, fi.title AS item_title,
-             fi.link AS item_link, fi.summary AS item_summary
+             fi.link AS item_link, fi.summary AS item_summary,
+             fi.published_at AS item_published_at
       FROM route_destinations rd
       JOIN routes r  ON r.id = rd.route_id
       JOIN feeds  f  ON f.id = r.feed_id
       LEFT JOIN LATERAL (
-        SELECT id, title, link, summary
+        SELECT id, title, link, summary, published_at
         FROM feed_items
         WHERE feed_id = f.id
         ORDER BY COALESCE(published_at, fetched_at) DESC
@@ -108,46 +111,48 @@ export async function POST(req: NextRequest, ctx: { params: Promise<Params> }) {
   })
   if (!sink) return NextResponse.json({ error: 'sink-not-found' }, { status: 404 })
 
-  // Format the same way the dispatcher does so what the user sees in the
-  // test is what they'd see in a real dispatch.
+  // Format identically to the dispatcher so the test reflects real delivery.
   const subject = ctxRow.item_title ?? `(no title) — ${ctxRow.feed_label}`
-  const summary = ctxRow.item_summary ?? ''
   const link = ctxRow.item_link ?? ''
-  const text = [
-    ctxRow.item_title ?? '(no title)',
-    '',
-    summary,
-    '',
-    link,
-    '',
-    `— from ${ctxRow.feed_label} · Euphoric Notify (test)`,
-  ].filter(Boolean).join('\n')
+  const publishedAt = ctxRow.item_published_at ? new Date(ctxRow.item_published_at) : null
 
   let result
-  if (ctxRow.sink_type === 'smtp') {
+  if (ctxRow.sink_type === 'smtp' || ctxRow.sink_type === 'resend') {
     if (!ctxRow.destination) {
       return NextResponse.json({ error: 'missing-destination', code: 'missing-destination' }, { status: 400 })
     }
-    const smtpSink = sink as SinkSmtp
-    result = await sendViaSmtp(smtpSink, {
-      to: ctxRow.destination,
-      subject,
-      text,
-      messageId: `<srn-test-${destId}-${ctxRow.item_id}@${smtpSink.from_email.split('@')[1] ?? 'localhost'}>`,
+    const { text, html } = buildFeedItemBody({
+      title: ctxRow.item_title,
+      summaryHtml: ctxRow.item_summary,
+      link,
+      feedLabel: ctxRow.feed_label,
     })
-  } else if (ctxRow.sink_type === 'resend') {
-    if (!ctxRow.destination) {
-      return NextResponse.json({ error: 'missing-destination', code: 'missing-destination' }, { status: 400 })
+    if (ctxRow.sink_type === 'smtp') {
+      const smtpSink = sink as SinkSmtp
+      result = await sendViaSmtp(smtpSink, {
+        to: ctxRow.destination,
+        subject,
+        text,
+        html,
+        messageId: `<srn-test-${destId}-${ctxRow.item_id}@${smtpSink.from_email.split('@')[1] ?? 'localhost'}>`,
+      })
+    } else {
+      result = await sendViaResend(sink as SinkResend, {
+        to: ctxRow.destination,
+        subject,
+        text,
+        html,
+        idempotencyKey: `srn-test-${destId}-${ctxRow.item_id}`,
+      })
     }
-    result = await sendViaResend(sink as SinkResend, {
-      to: ctxRow.destination,
-      subject,
-      text,
-      idempotencyKey: `srn-test-${destId}-${ctxRow.item_id}`,
-    })
   } else if (ctxRow.sink_type === 'ntfy') {
     const ntfySink = sink as SinkNtfy
-    const message = summary ? summary.slice(0, 1500) : (link || '(no body)')
+    const message = buildNtfyBody({
+      title: ctxRow.item_title,
+      summaryHtml: ctxRow.item_summary,
+      link,
+      feedLabel: ctxRow.feed_label,
+    })
     result = await publishToNtfy(ntfySink, {
       title: ctxRow.item_title ?? ctxRow.feed_label,
       message,
@@ -156,13 +161,33 @@ export async function POST(req: NextRequest, ctx: { params: Promise<Params> }) {
     })
   } else {
     const discordSink = sink as SinkDiscordWebhook
-    const message = summary || link || '(no body)'
-    result = await publishToDiscord(discordSink, {
-      title: ctxRow.item_title ?? ctxRow.feed_label,
-      message,
-      link: link || undefined,
-      idempotencyKey: `srn-test-${destId}-${ctxRow.item_id}`,
-    })
+    if (discordSink.use_embeds) {
+      const embed = buildDiscordEmbed({
+        title: ctxRow.item_title,
+        summaryHtml: ctxRow.item_summary,
+        link,
+        feedLabel: ctxRow.feed_label,
+        publishedAt,
+      })
+      result = await publishToDiscord(discordSink, {
+        message: '',
+        embed,
+        idempotencyKey: `srn-test-${destId}-${ctxRow.item_id}`,
+      })
+    } else {
+      const md = buildNtfyBody({
+        title: ctxRow.item_title,
+        summaryHtml: ctxRow.item_summary,
+        link,
+        feedLabel: ctxRow.feed_label,
+      })
+      result = await publishToDiscord(discordSink, {
+        title: ctxRow.item_title ?? ctxRow.feed_label,
+        message: md,
+        link: link || undefined,
+        idempotencyKey: `srn-test-${destId}-${ctxRow.item_id}`,
+      })
+    }
   }
 
   void writeAudit({
