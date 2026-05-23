@@ -86,6 +86,8 @@ function DestinationRow({ routeId, dest }: { routeId: string; dest: Destination 
   const [destination, setDestination] = useState(dest.destination ?? '')
   const [enabled, setEnabled] = useState(dest.enabled)
   const [busy, setBusy] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const needsEmail = EMAIL_TYPES.includes(dest.sink_type)
   const inputCls = 'rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 outline-none focus:border-zinc-500'
 
@@ -109,6 +111,34 @@ function DestinationRow({ routeId, dest }: { routeId: string; dest: Destination 
     await fetch(`/api/routes/${routeId}/destinations/${dest.id}`, { method: 'DELETE' })
     setBusy(false)
     router.refresh()
+  }
+
+  async function sendLatest() {
+    setTesting(true)
+    setTestMsg(null)
+    try {
+      const res = await fetch(`/api/routes/${routeId}/destinations/${dest.id}/test-with-latest`, { method: 'POST' })
+      const body = (await res.json().catch(() => ({}))) as {
+        ok?: boolean; error?: string; code?: string; retryAfterSec?: number
+        item?: { id: string; title: string | null }
+      }
+      if (res.ok && body.ok) {
+        const title = body.item?.title ? `"${body.item.title}"` : 'latest item'
+        setTestMsg({ ok: true, text: `Sent ${title}` })
+      } else if (res.status === 429) {
+        setTestMsg({ ok: false, text: `Rate-limited (${body.retryAfterSec ?? 60}s)` })
+      } else if (body.code === 'no-items') {
+        setTestMsg({ ok: false, text: 'Feed has no items yet — wait for the first poll' })
+      } else if (body.code === 'missing-destination') {
+        setTestMsg({ ok: false, text: 'Set a destination email first, then Save' })
+      } else {
+        setTestMsg({ ok: false, text: `${body.code ?? res.status} — ${body.error ?? 'send failed'}` })
+      }
+    } catch (err) {
+      setTestMsg({ ok: false, text: err instanceof Error ? err.message : 'network error' })
+    } finally {
+      setTesting(false)
+    }
   }
 
   return (
@@ -138,10 +168,21 @@ function DestinationRow({ routeId, dest }: { routeId: string; dest: Destination 
         <button onClick={save} disabled={busy} className="rounded border border-zinc-700 px-2 py-1 text-xs hover:bg-zinc-800 disabled:opacity-40">
           Save
         </button>
+        <button
+          onClick={sendLatest}
+          disabled={busy || testing}
+          title="Send the most recent feed item through this destination — does not record in dispatch history."
+          className="rounded border border-emerald-800 px-2 py-1 text-xs text-emerald-300 hover:bg-emerald-950 disabled:opacity-40"
+        >
+          {testing ? 'Sending…' : 'Send latest'}
+        </button>
         <button onClick={remove} disabled={busy} className="rounded border border-red-900 px-2 py-1 text-xs text-red-300 hover:bg-red-950 disabled:opacity-40">
           Remove
         </button>
       </div>
+      {testMsg && (
+        <p className={`text-xs ${testMsg.ok ? 'text-emerald-300' : 'text-red-400'}`}>{testMsg.text}</p>
+      )}
     </li>
   )
 }
