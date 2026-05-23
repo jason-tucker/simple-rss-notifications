@@ -93,7 +93,10 @@ async function workLoop(sub: NotifySubscriber) {
         await sleepUntilKickOrMs(sub, IDLE_SLEEP_MS)
       }
     } catch (err) {
-      log('work-loop-error', { err: err instanceof Error ? err.message : String(err) })
+      log('work-loop-error', {
+        err: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      })
       await new Promise((r) => setTimeout(r, ERROR_SLEEP_MS))
     }
   }

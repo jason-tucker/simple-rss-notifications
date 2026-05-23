@@ -5,6 +5,11 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.12.1] — 2026-05-23
+
+### Fixed (diagnostic)
+- Worker's `work-loop-error` log now includes the full stack trace. The bare `.message` was too thin to localize a `Received an instance of Date` error that crashes every poll attempt; the stack identifies the call site.
+
 ## [0.12.0] — 2026-05-22 — PR12: Feed Health banner
 
 ### Added
