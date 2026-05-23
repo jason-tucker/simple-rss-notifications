@@ -86,15 +86,15 @@ async function pollFeed(feed: FeedRow, log: Logger): Promise<void> {
     // Bulk insert via VALUES list. Build the args inline; postgres-js
     // safely parameterizes.
     // it.publishedAt is a JS Date from the parser; serialize as ISO + cast
-    // so we never hand a raw Date to postgres-js param binding. (Bundle has
-    // hit `Buffer.byteLength(date)` errors when the timestamptz serializer
-    // misfires on certain rows.)
+    // so we never hand a raw Date to postgres-js param binding. Storage cap
+    // bumped 4 KB → 200 KB so the dispatcher can render real formatted HTML
+    // emails; still bounded for safety against a hostile feed.
     const values = items.map((it) => sql`(
       ${feed.id}::uuid,
       ${it.guid},
       ${it.link},
       ${it.title},
-      ${it.summary?.slice(0, 4000) ?? null},
+      ${it.summary?.slice(0, 200_000) ?? null},
       ${it.publishedAt?.toISOString() ?? null}::timestamptz
     )`)
     // Drizzle's sql.join lets us interpolate the comma-separated list.

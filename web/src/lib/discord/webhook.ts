@@ -13,8 +13,14 @@ export interface DiscordPublishArgs {
   message: string
   /** Optional link — when set + use_embeds, becomes the embed URL. */
   link?: string
-  /** Idempotency tag, included as the request_id query string so logs can correlate. */
+  /** Idempotency tag, included in the request body so logs can correlate. */
   idempotencyKey?: string
+  /**
+   * Full rich-embed object that overrides the default {title, description, url}
+   * shape — lets the caller supply author, timestamp, footer, color, fields.
+   * Falls back to the simple form when not set.
+   */
+  embed?: Record<string, unknown>
 }
 
 /**
@@ -67,12 +73,18 @@ export async function publishToDiscord(sink: SinkDiscordWebhook, args: DiscordPu
   if (sink.avatar_url) body.avatar_url = sink.avatar_url
 
   if (sink.use_embeds) {
-    const embed: Record<string, unknown> = {
-      title: (args.title ?? 'Notification').slice(0, 256),
-      description: args.message.slice(0, 4000),
+    // Caller-provided rich embed wins (dispatcher passes one assembled
+    // from the feed item). Otherwise fall back to the minimal shape.
+    if (args.embed) {
+      body.embeds = [args.embed]
+    } else {
+      const embed: Record<string, unknown> = {
+        title: (args.title ?? 'Notification').slice(0, 256),
+        description: args.message.slice(0, 4000),
+      }
+      if (args.link) embed.url = args.link
+      body.embeds = [embed]
     }
-    if (args.link) embed.url = args.link
-    body.embeds = [embed]
   } else {
     const lines = [args.title, args.message, args.link].filter(Boolean) as string[]
     body.content = lines.join('\n').slice(0, 2000)

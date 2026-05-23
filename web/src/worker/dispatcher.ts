@@ -3,6 +3,7 @@ import { db } from '@/lib/db/client'
 import { sendViaSmtp, sendViaResend } from '@/lib/email/send'
 import { publishToNtfy } from '@/lib/ntfy/publish'
 import { publishToDiscord } from '@/lib/discord/webhook'
+import { buildFeedItemBody, buildDiscordEmbed, buildNtfyBody } from '@/lib/rss/format'
 import type { SinkSmtp, SinkResend, SinkNtfy, SinkDiscordWebhook } from '@/lib/db/schema'
 
 type Logger = (msg: string, extra?: Record<string, unknown>) => void
@@ -81,49 +82,52 @@ export async function dispatchOnePending(log: Logger): Promise<boolean> {
   }
 
   const subject = job.item_title ?? `(no title) — ${job.feed_label}`
-  const summary = job.item_summary ?? ''
   const link = job.item_link ?? ''
-  const text = [
-    job.item_title ?? '(no title)',
-    '',
-    summary,
-    '',
-    link,
-    '',
-    `— from ${job.feed_label} · Euphoric Notify`,
-  ].filter(Boolean).join('\n')
+  const publishedAt = job.item_published_at ? new Date(job.item_published_at) : null
 
   let result
-  if (job.sink_type === 'smtp') {
+  if (job.sink_type === 'smtp' || job.sink_type === 'resend') {
     if (!job.destination) {
       await db.execute(sql`UPDATE dispatches SET status = 'failed', error = 'route has no destination', dispatched_at = now() WHERE id = ${job.dispatch_id}::uuid`)
       log('dispatch-failed', { dispatch_id: job.dispatch_id, reason: 'missing-destination' })
       return true
     }
-    const smtpSink = sink as SinkSmtp
-    result = await sendViaSmtp(smtpSink, {
-      to: job.destination,
-      subject,
-      text,
-      messageId: `<srn-${job.dispatch_id}@${smtpSink.from_email.split('@')[1] ?? 'localhost'}>`,
+    // Email gets both: a real HTML body (sanitized) so clients render
+    // formatting, and a plain-text fallback derived from the same source.
+    const { text, html } = buildFeedItemBody({
+      title: job.item_title,
+      summaryHtml: job.item_summary,
+      link,
+      feedLabel: job.feed_label,
     })
-  } else if (job.sink_type === 'resend') {
-    if (!job.destination) {
-      await db.execute(sql`UPDATE dispatches SET status = 'failed', error = 'route has no destination', dispatched_at = now() WHERE id = ${job.dispatch_id}::uuid`)
-      log('dispatch-failed', { dispatch_id: job.dispatch_id, reason: 'missing-destination' })
-      return true
+    if (job.sink_type === 'smtp') {
+      const smtpSink = sink as SinkSmtp
+      result = await sendViaSmtp(smtpSink, {
+        to: job.destination,
+        subject,
+        text,
+        html,
+        messageId: `<srn-${job.dispatch_id}@${smtpSink.from_email.split('@')[1] ?? 'localhost'}>`,
+      })
+    } else {
+      result = await sendViaResend(sink as SinkResend, {
+        to: job.destination,
+        subject,
+        text,
+        html,
+        idempotencyKey: `srn-${job.dispatch_id}`,
+      })
     }
-    result = await sendViaResend(sink as SinkResend, {
-      to: job.destination,
-      subject,
-      text,
-      idempotencyKey: `srn-${job.dispatch_id}`,
-    })
   } else if (job.sink_type === 'ntfy') {
-    // ntfy — no `destination`; the sink itself carries server_url + topic.
+    // ntfy — sink owns server_url + topic. Body is plain-text rendered
+    // from HTML and trimmed for phone-screen readability.
     const ntfySink = sink as SinkNtfy
-    // Trim summary to keep the push body readable on a phone.
-    const message = summary ? summary.slice(0, 1500) : (link || '(no body)')
+    const message = buildNtfyBody({
+      title: job.item_title,
+      summaryHtml: job.item_summary,
+      link,
+      feedLabel: job.feed_label,
+    })
     result = await publishToNtfy(ntfySink, {
       title: job.item_title ?? job.feed_label,
       message,
@@ -131,15 +135,38 @@ export async function dispatchOnePending(log: Logger): Promise<boolean> {
       idempotencyKey: `srn-${job.dispatch_id}`,
     })
   } else {
-    // discord_webhook — sink owns the webhook URL.
+    // discord_webhook — rich embed (author + title + clickable URL +
+    // markdown description + timestamp + footer + brand color).
     const discordSink = sink as SinkDiscordWebhook
-    const message = summary || link || '(no body)'
-    result = await publishToDiscord(discordSink, {
-      title: job.item_title ?? job.feed_label,
-      message,
-      link: link || undefined,
-      idempotencyKey: `srn-${job.dispatch_id}`,
-    })
+    if (discordSink.use_embeds) {
+      const embed = buildDiscordEmbed({
+        title: job.item_title,
+        summaryHtml: job.item_summary,
+        link,
+        feedLabel: job.feed_label,
+        publishedAt,
+      })
+      result = await publishToDiscord(discordSink, {
+        message: '', // unused when embed is set + use_embeds=true
+        embed,
+        idempotencyKey: `srn-${job.dispatch_id}`,
+      })
+    } else {
+      // Plain-content fallback when user disabled embeds — still render
+      // HTML to markdown so Discord shows bold/italic/links properly.
+      const md = buildNtfyBody({
+        title: job.item_title,
+        summaryHtml: job.item_summary,
+        link,
+        feedLabel: job.feed_label,
+      })
+      result = await publishToDiscord(discordSink, {
+        title: job.item_title ?? job.feed_label,
+        message: md,
+        link: link || undefined,
+        idempotencyKey: `srn-${job.dispatch_id}`,
+      })
+    }
   }
 
   if (result.ok) {

@@ -16,7 +16,9 @@ import { decrypt } from '@/lib/crypto/aead'
 export interface SendArgs {
   to: string
   subject: string
+  /** Plain-text body — used as the fallback for clients that don't render html. */
   text?: string
+  /** HTML body — preferred by every modern mail client. */
   html?: string
   /** Set to ensure SMTP servers don't double-send on dispatcher retries. */
   messageId?: string
