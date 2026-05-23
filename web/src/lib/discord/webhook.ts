@@ -18,9 +18,12 @@ export interface DiscordPublishArgs {
   /**
    * Full rich-embed object that overrides the default {title, description, url}
    * shape — lets the caller supply author, timestamp, footer, color, fields.
-   * Falls back to the simple form when not set.
+   * Falls back to the simple form when not set. Typed as JSON-shaped object
+   * so callers with their own narrower interfaces (lib/rss/format.ts's
+   * DiscordEmbed) assign without ceremony.
    */
-  embed?: Record<string, unknown>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  embed?: Record<string, any>
 }
 
 /**
