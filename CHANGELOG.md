@@ -5,6 +5,18 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.11.0] — 2026-05-22 — PR11: "Send latest item" test per destination
+
+### Added
+- **"Send latest" button** on every destination row in the route edit page. Sends the most recent `feed_item` (newest by `published_at`, then `fetched_at`) from the route's feed through that destination's sink — same formatting the dispatcher uses, so you can preview a real-shape notification without waiting for the next poll.
+- **`POST /api/routes/[id]/destinations/[destId]/test-with-latest`** — picks the newest item via a lateral subquery, loads the destination's sink, calls the right publisher (SMTP / Resend / ntfy / Discord). Rate-limited 10/min/user (shares the `test-send` bucket since it costs real money on transactional providers).
+- UI translates the specific error codes inline:
+  - `no-items` (409) — "Feed has no items yet — wait for the first poll"
+  - `missing-destination` (400) — "Set a destination email first, then Save"
+  - `rate-limited` (429) — shows `Retry-After`
+- Intentionally does **NOT** record a `dispatches` row. This is a test, not a delivery: the dispatcher still sends the item in its own time on the next poll cycle, and the test path doesn't conflict with the dispatcher's unique key or pollute `/dashboard/activity`.
+- Audit-logged as `route.destination.test-with-latest.{ok,failed}`.
+
 ## [0.10.0] — 2026-05-22 — PR10: Perf pass
 
 ### Changed
