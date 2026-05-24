@@ -16,11 +16,20 @@ export const dynamic = 'force-dynamic'
 const POLL_MIN = 60
 const POLL_MAX = 24 * 60 * 60
 
-// C0 controls (NUL through US, incl. TAB / CR / LF) + DEL. Forbidden inside
-// a Cookie header value per RFC 6265 §4.1.1 cookie-octet. undici rejects them
-// at the runtime layer too, but we want the user to see a clear validation
-// error here instead of a mysterious silently-failing poll later.
-const COOKIE_CONTROL_CHARS = /[\x00-\x1F\x7F]/
+// Forbidden inside a Cookie header value per RFC 6265 §4.1.1 cookie-octet:
+//   \x00-\x1F   C0 controls (NUL through US, incl. TAB / CR / LF)
+//   \x7F        DEL
+//   \x80-\x9F   C1 controls — undici's header-value validator only blocks
+//               \r\n\0, so these would otherwise actually ship in the
+//               Cookie header on the next poll. Most origin servers strip
+//               or 400 on them, but better to reject at the boundary with
+//               a clear error than to ship malformed headers.
+//          LINE SEPARATOR — not a CR/LF to undici, but treated as a
+//               line break by plenty of parsers downstream.
+//          PARAGRAPH SEPARATOR — same reasoning.
+// `u` flag so the high-codepoint chars work correctly under surrogate-pair
+// edge cases.
+const COOKIE_CONTROL_CHARS = /[\x00-\x1F\x7F-\x9F  ]/u
 
 const Body = z.object({
   label: z.string().min(1).max(100),

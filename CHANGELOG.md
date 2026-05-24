@@ -5,6 +5,11 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.14.5] — 2026-05-24
+
+### Security
+- **Broaden the cookie control-char rejection to C1 controls and the Unicode line separators.** PR #24's regex rejected only `[\x00-\x1F\x7F]` (RFC 6265 §4.1.1 cookie-octet C0 + DEL), which left a gap: `\x80-\x9F` (C1 controls) and `U+2028` / `U+2029` (LINE SEPARATOR / PARAGRAPH SEPARATOR) pass undici's header-value validator (it only blocks `\r\n\0`) and would actually ship in the `Cookie:` header on the next poll. Origin servers tend to strip or 400 silently, so this is not a smuggle against the Node HTTP stack — but it's still off-spec and produces mysterious authenticated-fetch failures. POST + PATCH `/api/feeds` now reject the full `[\x00-\x1F\x7F-\x9F  ]` range (with the `u` flag for surrogate-pair correctness), and `fetch.ts`'s defensive strip is synced to the same range. Closes #27.
+
 ## [0.14.4] — 2026-05-24
 
 ### Security

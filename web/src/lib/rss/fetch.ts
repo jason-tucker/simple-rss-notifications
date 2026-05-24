@@ -34,12 +34,13 @@ export async function fetchFeed(url: string, opts: { etag?: string | null; lastM
   if (opts.lastModified) headers['If-Modified-Since'] = opts.lastModified
   // Authenticated feeds (XenForo aggregator, paid news, etc.) need a session
   // cookie. The API write boundary (POST/PATCH /api/feeds) already rejects
-  // cookies containing C0 controls / DEL with a clear 400 error, so anything
-  // reaching here should already be clean. Strip defensively as belt-and-
-  // braces: an attacker who somehow seeded a bad value into the DB still
-  // can't smuggle headers, and undici's runtime header validation would
-  // throw otherwise — silent strip is better than a poll-time crash.
-  if (opts.cookie) headers['Cookie'] = opts.cookie.replace(/[\x00-\x1F\x7F]/g, '').trim()
+  // cookies containing C0/C1 controls, DEL, and U+2028/U+2029 with a clear
+  // 400 error, so anything reaching here should already be clean. Strip
+  // defensively as belt-and-braces (matching the boundary range): an
+  // attacker who somehow seeded a bad value into the DB still can't smuggle
+  // headers, and undici's runtime header validation would throw otherwise —
+  // silent strip is better than a poll-time crash.
+  if (opts.cookie) headers['Cookie'] = opts.cookie.replace(/[\x00-\x1F\x7F-\x9F  ]/gu, '').trim()
 
   try {
     const res = await fetch(url, {
