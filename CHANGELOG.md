@@ -5,6 +5,11 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.14.2] — 2026-05-24
+
+### Security
+- **Rate-limit the `/api/feeds` write routes.** Per CLAUDE.md §11, every write API route should be rate-limited; the feeds routes (POST, PATCH, DELETE) were missing it. PR14 made this worse by adding an 8 KB AES-encrypted column write + an audit row per call, so a hijacked session could cheaply flood the DB and burn AES cycles. Now: POST capped at 10/min/user, PATCH and DELETE capped at 30/min/user. Uses the existing `rateLimit()` helper with distinct buckets (`feeds:create:user:*`, `feeds:update:user:*`, `feeds:delete:user:*`). Closes #19.
+
 ## [0.14.1] — 2026-05-24
 
 ### Security
