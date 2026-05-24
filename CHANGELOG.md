@@ -5,6 +5,11 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.14.3] — 2026-05-24
+
+### Security
+- **Reject control chars in stored cookies at the API write boundary.** Previously `POST` / `PATCH /api/feeds` accepted any string up to 8 KB and the only defense was `replace(/[\r\n]/g, '')` at fetch time — which missed NUL, other C0 controls, and DEL, and *silently stripped* offending characters so an authenticated fetch would mysteriously stop working with no visible error to the user. Now both routes reject any cookie value containing `[\x00-\x1F\x7F]` with `400 invalid-cookie-control-chars`. The fetch-time strip is broadened to the full forbidden range and kept as belt-and-braces (so a value somehow seeded directly into the DB still can't smuggle headers or crash undici at poll time). Closes #20.
+
 ## [0.14.2] — 2026-05-24
 
 ### Security

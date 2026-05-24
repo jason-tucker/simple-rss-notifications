@@ -16,6 +16,11 @@ export const dynamic = 'force-dynamic'
 const POLL_MIN = 60
 const POLL_MAX = 24 * 60 * 60
 
+// C0 controls (NUL through US, incl. TAB / CR / LF) + DEL. Forbidden inside
+// a Cookie header value per RFC 6265 §4.1.1 cookie-octet. See POST handler
+// in ../route.ts for rationale.
+const COOKIE_CONTROL_CHARS = /[\x00-\x1F\x7F]/
+
 const Patch = z.object({
   label: z.string().min(1).max(100).optional(),
   url: z.string().url().max(2048).optional(),
@@ -54,6 +59,14 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<Params> }) 
     return NextResponse.json({ error: 'bad-request', issues: parsed.error.issues }, { status: 400 })
   }
   const ip = clientIp(req)
+
+  // Reject control chars in the cookie up front (see POST in ../route.ts).
+  if (typeof parsed.data.cookie === 'string' && COOKIE_CONTROL_CHARS.test(parsed.data.cookie)) {
+    return NextResponse.json(
+      { error: 'invalid-cookie-control-chars', code: 'invalid-cookie-control-chars' },
+      { status: 400 },
+    )
+  }
 
   if (parsed.data.url) {
     const ssrf = await checkSafeOutboundUrl(parsed.data.url)
