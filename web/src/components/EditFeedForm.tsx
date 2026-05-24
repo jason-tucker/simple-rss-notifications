@@ -9,6 +9,7 @@ interface Initial {
   url: string
   enabled: boolean
   poll_interval_s: number
+  has_cookie: boolean
 }
 
 export function EditFeedForm({ initial }: { initial: Initial }) {
@@ -17,6 +18,8 @@ export function EditFeedForm({ initial }: { initial: Initial }) {
   const [url, setUrl] = useState(initial.url)
   const [enabled, setEnabled] = useState(initial.enabled)
   const [pollMinutes, setPollMinutes] = useState(String(Math.round(initial.poll_interval_s / 60)))
+  const [cookie, setCookie] = useState('')
+  const [clearCookie, setClearCookie] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -33,6 +36,8 @@ export function EditFeedForm({ initial }: { initial: Initial }) {
           url,
           enabled,
           poll_interval_s: Math.max(60, Number(pollMinutes) * 60),
+          // Three states: don't send field, send a new value, or send clear_cookie.
+          ...(clearCookie ? { clear_cookie: true } : cookie.trim() ? { cookie: cookie.trim() } : {}),
         }),
       })
       if (!res.ok) {
@@ -70,6 +75,40 @@ export function EditFeedForm({ initial }: { initial: Initial }) {
         <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
         Enabled
       </label>
+
+      <details className="rounded border border-zinc-800 p-3" open={initial.has_cookie}>
+        <summary className="cursor-pointer text-xs uppercase tracking-wide text-zinc-500">
+          Authentication (optional) {initial.has_cookie && <span className="text-emerald-400 normal-case tracking-normal">— cookie set</span>}
+        </summary>
+        <div className="mt-3 space-y-2">
+          <label className="block">
+            <span className="text-sm text-zinc-400">
+              Cookie header {initial.has_cookie && <span className="text-xs text-zinc-500">— leave blank to keep the existing one</span>}
+            </span>
+            <textarea
+              value={cookie}
+              onChange={(e) => { setCookie(e.target.value); if (e.target.value) setClearCookie(false) }}
+              maxLength={8192}
+              rows={3}
+              spellCheck={false}
+              autoComplete="off"
+              disabled={clearCookie}
+              className={inputCls + ' font-mono text-xs disabled:opacity-40'}
+              placeholder={initial.has_cookie ? '(unchanged — type to replace)' : 'xf_user=…; xf_session=…'}
+            />
+            <span className="mt-1 block text-xs text-zinc-500">
+              Sent as the <code className="text-zinc-400">Cookie:</code> header on every poll. Stored encrypted at rest.
+            </span>
+          </label>
+          {initial.has_cookie && (
+            <label className="flex items-center gap-2 text-sm text-zinc-400">
+              <input type="checkbox" checked={clearCookie} onChange={(e) => setClearCookie(e.target.checked)} />
+              Remove the saved cookie
+            </label>
+          )}
+        </div>
+      </details>
+
       {error && <p className="text-sm text-red-400">{error}</p>}
       <div className="flex gap-2 pt-2">
         <button type="submit" disabled={busy} className="rounded bg-zinc-100 px-4 py-2 font-medium text-zinc-900 hover:bg-white disabled:opacity-50">

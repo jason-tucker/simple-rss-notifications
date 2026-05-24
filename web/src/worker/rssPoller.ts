@@ -2,6 +2,7 @@ import { sql, type SQL } from 'drizzle-orm'
 import { db } from '@/lib/db/client'
 import { fetchFeed } from '@/lib/rss/fetch'
 import { parseFeedBody } from '@/lib/rss/parse'
+import { decrypt } from '@/lib/crypto/aead'
 
 type Logger = (msg: string, extra?: Record<string, unknown>) => void
 
@@ -24,9 +25,12 @@ export async function pollOneDueFeed(log: Logger): Promise<boolean> {
     id: string; user_id: string; url: string; label: string
     poll_interval_s: number; etag: string | null; last_modified: string | null
     backfill_mode: string; backfill_value: number; backfill_pace_seconds: number
+    cookie_ciphertext: Buffer | null; cookie_iv: Buffer | null
+    cookie_tag: Buffer | null; cookie_key_version: number | null
   }>(sql`
     SELECT id, user_id, url, label, poll_interval_s, etag, last_modified,
-           backfill_mode, backfill_value, backfill_pace_seconds
+           backfill_mode, backfill_value, backfill_pace_seconds,
+           cookie_ciphertext, cookie_iv, cookie_tag, cookie_key_version
     FROM feeds
     WHERE enabled
       AND (last_polled_at IS NULL
@@ -45,10 +49,39 @@ interface FeedRow {
   id: string; user_id: string; url: string; label: string
   poll_interval_s: number; etag: string | null; last_modified: string | null
   backfill_mode: string; backfill_value: number; backfill_pace_seconds: number
+  cookie_ciphertext: Buffer | null; cookie_iv: Buffer | null
+  cookie_tag: Buffer | null; cookie_key_version: number | null
 }
 
 async function pollFeed(feed: FeedRow, log: Logger): Promise<void> {
-  const result = await fetchFeed(feed.url, { etag: feed.etag, lastModified: feed.last_modified })
+  // Decrypt the stored cookie if present. A decryption failure is treated as
+  // a fetch-level error so the feed surfaces in the Feed Health banner with
+  // the actual reason — silently dropping the cookie would just look like an
+  // empty feed to the user.
+  let cookie: string | null = null
+  if (feed.cookie_ciphertext && feed.cookie_iv && feed.cookie_tag && feed.cookie_key_version != null) {
+    try {
+      cookie = decrypt({
+        ciphertext: feed.cookie_ciphertext,
+        iv: feed.cookie_iv,
+        tag: feed.cookie_tag,
+        keyVersion: feed.cookie_key_version,
+      })
+    } catch (err) {
+      log('feed-cookie-decrypt-failed', { feed_id: feed.id, label: feed.label, error: err instanceof Error ? err.message : String(err) })
+      await db.execute(sql`
+        UPDATE feeds SET
+          last_polled_at = now(),
+          last_error = 'cookie decryption failed (key mismatch?)',
+          last_error_at = now(),
+          consecutive_failures = consecutive_failures + 1
+        WHERE id = ${feed.id}::uuid
+      `)
+      return
+    }
+  }
+
+  const result = await fetchFeed(feed.url, { etag: feed.etag, lastModified: feed.last_modified, cookie })
 
   if (result.kind === 'error') {
     log('feed-fetch-failed', { feed_id: feed.id, label: feed.label, code: result.code, error: result.error })

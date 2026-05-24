@@ -19,8 +19,11 @@ export default async function EditFeedPage({
   const feed = await withUser(session.uid, async (tx) => {
     const rows = await tx.execute<{
       id: string; label: string; url: string; enabled: boolean; poll_interval_s: number
+      has_cookie: boolean
     }>(sql`
-      SELECT id, label, url, enabled, poll_interval_s FROM feeds WHERE id = ${id}::uuid LIMIT 1
+      SELECT id, label, url, enabled, poll_interval_s,
+             (cookie_ciphertext IS NOT NULL) AS has_cookie
+      FROM feeds WHERE id = ${id}::uuid LIMIT 1
     `)
     return rows[0]
   })

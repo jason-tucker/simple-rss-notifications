@@ -5,8 +5,9 @@ import { z } from 'zod'
 import { readSessionCookie } from '@/lib/auth/session'
 import { isSameOrigin } from '@/lib/auth/csrf'
 import { withUser } from '@/lib/db/withUser'
-import { writeAudit } from '@/lib/audit'
-import { clientIp } from '@/lib/ratelimit'
+import { encrypt } from '@/lib/crypto/aead'
+import { writeAudit, redactSecretFields } from '@/lib/audit'
+import { clientIp, rateLimit } from '@/lib/ratelimit'
 import { checkSafeOutboundUrl } from '@/lib/ssrf'
 import { notifyFeedsChanged } from '@/lib/db/notify'
 
@@ -15,11 +16,21 @@ export const dynamic = 'force-dynamic'
 const POLL_MIN = 60
 const POLL_MAX = 24 * 60 * 60
 
+// Forbidden inside a Cookie header value per RFC 6265 §4.1.1 cookie-octet:
+// C0 controls + DEL + C1 controls + U+2028 / U+2029. See POST handler in
+// ../route.ts for rationale.
+const COOKIE_CONTROL_CHARS = /[\x00-\x1F\x7F-\x9F  ]/u
+
 const Patch = z.object({
   label: z.string().min(1).max(100).optional(),
   url: z.string().url().max(2048).optional(),
   enabled: z.boolean().optional(),
   poll_interval_s: z.number().int().min(POLL_MIN).max(POLL_MAX).optional(),
+  // Omit or empty string = preserve existing cookie (same convention used
+  // by the sink PATCH routes for password / token / api_key). To remove a
+  // previously-set cookie, send `clear_cookie: true`.
+  cookie: z.string().max(8192).optional(),
+  clear_cookie: z.boolean().optional(),
 })
 
 type Params = { id: string }
@@ -29,6 +40,18 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<Params> }) 
   const session = await readSessionCookie()
   if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
+  // CLAUDE.md §11: every write API route has a per-user rate limit. PATCH
+  // can do an AES-encrypted column rewrite + audit log row per request; cap
+  // at 30/min/user (more permissive than POST since enable/disable toggles
+  // are reasonable to spam).
+  const rl = await rateLimit(`feeds:update:user:${session.uid}`, { limit: 30, windowMs: 60_000 })
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'rate-limited', code: 'rate-limited', retryAfterSec: rl.retryAfterSec },
+      { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) } },
+    )
+  }
+
   const { id } = await ctx.params
   const json = await req.json().catch(() => null)
   const parsed = Patch.safeParse(json)
@@ -37,12 +60,68 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<Params> }) 
   }
   const ip = clientIp(req)
 
+  // Reject control chars in the cookie up front (see POST in ../route.ts).
+  if (typeof parsed.data.cookie === 'string' && COOKIE_CONTROL_CHARS.test(parsed.data.cookie)) {
+    return NextResponse.json(
+      { error: 'invalid-cookie-control-chars', code: 'invalid-cookie-control-chars' },
+      { status: 400 },
+    )
+  }
+
+  // Whitespace-only cookie collapses to "not supplied" so it falls into the
+  // existing preserve path below (cookie omitted = leave the stored value
+  // alone) instead of being encrypted as useless whitespace. Non-empty values
+  // get trimmed so a stray space at the end of a paste doesn't corrupt the
+  // Cookie header on the next poll. See POST in ../route.ts for rationale.
+  const trimmed = parsed.data.cookie?.trim()
+  if (trimmed === '') {
+    parsed.data.cookie = undefined
+  } else if (trimmed) {
+    parsed.data.cookie = trimmed
+  }
+
   if (parsed.data.url) {
     const ssrf = await checkSafeOutboundUrl(parsed.data.url)
     if (ssrf) return NextResponse.json({ error: ssrf, code: 'ssrf-blocked' }, { status: 400 })
   }
 
   return withUser(session.uid, async (tx) => {
+    // Three states: clear, replace, preserve.
+    //   clear_cookie:true → null out all four cookie columns
+    //   non-empty cookie  → encrypt and overwrite
+    //   neither           → leave the columns alone
+    const clearing = parsed.data.clear_cookie === true
+    const supplyingCookie = !clearing && !!parsed.data.cookie && parsed.data.cookie.length > 0
+    const enc = supplyingCookie ? encrypt(parsed.data.cookie!) : null
+
+    // Origin-lock: if the URL is being changed AND a cookie is currently
+    // stored AND the caller is preserving it (neither clearing nor replacing),
+    // require an explicit decision when the origin changes. Otherwise a stale
+    // example.com session cookie would be shipped to attacker.example on the
+    // next poll. Same-origin URL edits are still allowed silently.
+    if (parsed.data.url && !clearing && !supplyingCookie) {
+      const existing = await tx.execute<{ url: string; has_cookie: boolean }>(sql`
+        SELECT url, (cookie_ciphertext IS NOT NULL) AS has_cookie
+        FROM feeds WHERE id = ${id}::uuid LIMIT 1
+      `)
+      const row = existing[0]
+      if (!row) return NextResponse.json({ error: 'not-found' }, { status: 404 })
+      if (row.has_cookie) {
+        let sameOrigin = false
+        try {
+          sameOrigin = new URL(row.url).origin === new URL(parsed.data.url).origin
+        } catch {
+          sameOrigin = false
+        }
+        if (!sameOrigin) {
+          return NextResponse.json(
+            { error: 'url-change-requires-cookie-decision', code: 'url-change-requires-cookie-decision' },
+            { status: 400 },
+          )
+        }
+      }
+    }
+
     const rows = await tx.execute<{ id: string }>(sql`
       UPDATE feeds SET
         label           = COALESCE(${parsed.data.label ?? null},            label),
@@ -52,6 +131,22 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<Params> }) 
         -- Resetting URL clears the HTTP cache hints so the next poll starts fresh.
         etag          = CASE WHEN ${parsed.data.url ?? null}::text IS NOT NULL THEN NULL ELSE etag END,
         last_modified = CASE WHEN ${parsed.data.url ?? null}::text IS NOT NULL THEN NULL ELSE last_modified END,
+        cookie_ciphertext  = CASE
+          WHEN ${clearing}::boolean THEN NULL
+          ELSE COALESCE(${enc?.ciphertext ?? null}, cookie_ciphertext)
+        END,
+        cookie_iv          = CASE
+          WHEN ${clearing}::boolean THEN NULL
+          ELSE COALESCE(${enc?.iv ?? null}, cookie_iv)
+        END,
+        cookie_tag         = CASE
+          WHEN ${clearing}::boolean THEN NULL
+          ELSE COALESCE(${enc?.tag ?? null}, cookie_tag)
+        END,
+        cookie_key_version = CASE
+          WHEN ${clearing}::boolean THEN NULL
+          ELSE COALESCE(${enc?.keyVersion ?? null}, cookie_key_version)
+        END,
         updated_at = now()
       WHERE id = ${id}::uuid
       RETURNING id
@@ -62,7 +157,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<Params> }) 
       action: 'feed.update',
       target_type: 'feed',
       target_id: id,
-      after: parsed.data,
+      after: redactSecretFields(parsed.data, ['cookie']),
       via: 'web',
       ip,
     })
@@ -75,6 +170,16 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<Params> })
   if (!isSameOrigin(req)) return NextResponse.json({ error: 'forbidden', code: 'csrf' }, { status: 403 })
   const session = await readSessionCookie()
   if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+
+  // CLAUDE.md §11: per-user rate limit on every write route. DELETE cascades
+  // through feed_items / routes / dispatches — cap at 30/min/user.
+  const rl = await rateLimit(`feeds:delete:user:${session.uid}`, { limit: 30, windowMs: 60_000 })
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'rate-limited', code: 'rate-limited', retryAfterSec: rl.retryAfterSec },
+      { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) } },
+    )
+  }
 
   const { id } = await ctx.params
   const ip = clientIp(req)

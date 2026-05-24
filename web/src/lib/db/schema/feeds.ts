@@ -1,5 +1,11 @@
-import { pgTable, uuid, text, integer, boolean, timestamp, index, uniqueIndex } from 'drizzle-orm/pg-core'
+import { pgTable, uuid, text, integer, boolean, timestamp, customType, index, uniqueIndex } from 'drizzle-orm/pg-core'
 import { users } from './users'
+
+// Same bytea customType the sinks schema uses — pg-core's `bytea()` helper
+// isn't exported in the version we're on.
+const bytea = customType<{ data: Buffer; default: false; notNull: false }>({
+  dataType() { return 'bytea' },
+})
 
 /**
  * RSS feed sources and how they fan out.
@@ -34,6 +40,17 @@ export const feeds = pgTable(
     /** HTTP cache hints; populated on every fetch so the next fetch can 304. */
     etag: text('etag'),
     last_modified: text('last_modified'),
+
+    /**
+     * Optional Cookie header to send on every fetch. Encrypted at rest
+     * (same AES-256-GCM 4-column layout as SMTP passwords). NULL means no
+     * cookie — the request goes out unauthenticated. Used for feeds gated
+     * behind a session (XenForo's per-user aggregator URL, paid news, etc.).
+     */
+    cookie_ciphertext: bytea('cookie_ciphertext'),
+    cookie_iv: bytea('cookie_iv'),
+    cookie_tag: bytea('cookie_tag'),
+    cookie_key_version: integer('cookie_key_version').default(1),
 
     last_polled_at: timestamp('last_polled_at', { withTimezone: true }),
     last_success_at: timestamp('last_success_at', { withTimezone: true }),

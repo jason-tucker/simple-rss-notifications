@@ -5,6 +5,48 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.14.5] — 2026-05-24
+
+### Security
+- **Broaden the cookie control-char rejection to C1 controls and the Unicode line separators.** PR #24's regex rejected only `[\x00-\x1F\x7F]` (RFC 6265 §4.1.1 cookie-octet C0 + DEL), which left a gap: `\x80-\x9F` (C1 controls) and `U+2028` / `U+2029` (LINE SEPARATOR / PARAGRAPH SEPARATOR) pass undici's header-value validator (it only blocks `\r\n\0`) and would actually ship in the `Cookie:` header on the next poll. Origin servers tend to strip or 400 silently, so this is not a smuggle against the Node HTTP stack — but it's still off-spec and produces mysterious authenticated-fetch failures. POST + PATCH `/api/feeds` now reject the full `[\x00-\x1F\x7F-\x9F  ]` range (with the `u` flag for surrogate-pair correctness), and `fetch.ts`'s defensive strip is synced to the same range. Closes #27.
+
+## [0.14.4] — 2026-05-24
+
+### Security
+- **Reject whitespace-only cookies at the API write boundary.** `POST` / `PATCH /api/feeds` accepted values like `"   "` because Zod sees length <= 8192 and the control-char regex from #20 doesn't reject `0x20` (space). The whitespace was then encrypted and shipped on every poll as `Cookie:    `, while the UI confidently showed the green "cookie set" badge for a value that does nothing — a guaranteed silent-failure path with no debugging breadcrumb for the user. Both routes now trim the cookie up front: an empty result collapses to `undefined` (POST stores no ciphertext, PATCH falls into the existing preserve path), and non-empty values are stored trimmed so a stray space at the end of a paste can't corrupt the header. Closes #26.
+
+## [0.14.3] — 2026-05-24
+
+### Security
+- **Reject control chars in stored cookies at the API write boundary.** Previously `POST` / `PATCH /api/feeds` accepted any string up to 8 KB and the only defense was `replace(/[\r\n]/g, '')` at fetch time — which missed NUL, other C0 controls, and DEL, and *silently stripped* offending characters so an authenticated fetch would mysteriously stop working with no visible error to the user. Now both routes reject any cookie value containing `[\x00-\x1F\x7F]` with `400 invalid-cookie-control-chars`. The fetch-time strip is broadened to the full forbidden range and kept as belt-and-braces (so a value somehow seeded directly into the DB still can't smuggle headers or crash undici at poll time). Closes #20.
+
+## [0.14.2] — 2026-05-24
+
+### Security
+- **Rate-limit the `/api/feeds` write routes.** Per CLAUDE.md §11, every write API route should be rate-limited; the feeds routes (POST, PATCH, DELETE) were missing it. PR14 made this worse by adding an 8 KB AES-encrypted column write + an audit row per call, so a hijacked session could cheaply flood the DB and burn AES cycles. Now: POST capped at 10/min/user, PATCH and DELETE capped at 30/min/user. Uses the existing `rateLimit()` helper with distinct buckets (`feeds:create:user:*`, `feeds:update:user:*`, `feeds:delete:user:*`). Closes #19.
+
+## [0.14.1] — 2026-05-24
+
+### Security
+- **Origin-lock the stored cookie on URL change.** Previously `PATCH /api/feeds/[id]` would let a caller swap `url` to a different origin while preserving the encrypted cookie, so the worker would happily ship a victim's `example.com` session cookie to `attacker.example` on the next poll (browsers normally block this via the cookie's `Domain` attribute; we don't store domains). Now: if the URL origin changes AND a cookie is currently stored AND the caller doesn't supply a replacement (`cookie`) or explicit removal (`clear_cookie: true`), the request is rejected with `400 url-change-requires-cookie-decision`. Same-origin URL edits and any request that explicitly addresses the cookie still pass. Closes #17.
+
+## [0.14.0] — 2026-05-24 — PR14: per-feed Cookie header for authenticated RSS
+
+### Added
+- **Optional `Cookie:` header per feed.** Some RSS sources (XenForo's per-user aggregator `/forums/-/index.rss`, paid news feeds, anything behind a session) only serve items to logged-in requesters. You can now paste the relevant `Cookie:` value in the feed create / edit form and the worker will send it on every poll.
+- **Encrypted at rest** with AES-256-GCM — same 4-column layout (`cookie_ciphertext` / `cookie_iv` / `cookie_tag` / `cookie_key_version`) the SMTP password and ntfy token use. NULL ciphertext = "no cookie, fetch unauthenticated", same as before.
+- **Migration 0011** (`0011_feeds_cookie.sql`) adds the four nullable columns to `feeds`.
+- **Edit form** shows "cookie set" and an explicit "Remove the saved cookie" checkbox when one is stored; omitting the field preserves the existing value (same convention the sink PATCH routes use for password / api_key / token).
+- **CR/LF stripped** from the cookie value before it goes on the wire so a pasted multi-line cookie can't inject extra headers.
+- **Decrypt failure surfaces as a feed error** — if the encryption key rotates and the stored cookie can't be decoded, the feed gets `last_error = "cookie decryption failed (key mismatch?)"` and shows in the Feed Health banner instead of silently returning an empty body.
+
+### Why
+- NewDay's forum RSS (`https://newdayrp.com/forums/-/index.rss`) returns an empty 624-byte channel stub to unauthenticated requests — they've disabled per-subforum RSS and gated the aggregator behind a session. Without cookie support there's no way to read it from the worker. This is a one-feed pain point today but the same pattern hits XenForo, Discourse, Patreon, anything WordPress-with-paywall-plugin, etc.
+
+### Audit / security
+- `cookie` is redacted to `[REDACTED]` in audit log entries (added `redactSecretFields(parsed.data, ['cookie'])` to both the feed create and update paths — those routes previously didn't redact because there were no secret fields).
+- `GET /api/feeds` returns `has_cookie: boolean` derived from `cookie_ciphertext IS NOT NULL`; the ciphertext itself never leaves the server.
+
 ## [0.13.0] — 2026-05-23 — PR13: notification formatting overhaul
 
 ### Added — `lib/rss/format.ts`
