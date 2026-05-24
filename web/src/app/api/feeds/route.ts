@@ -16,6 +16,12 @@ export const dynamic = 'force-dynamic'
 const POLL_MIN = 60
 const POLL_MAX = 24 * 60 * 60
 
+// C0 controls (NUL through US, incl. TAB / CR / LF) + DEL. Forbidden inside
+// a Cookie header value per RFC 6265 §4.1.1 cookie-octet. undici rejects them
+// at the runtime layer too, but we want the user to see a clear validation
+// error here instead of a mysterious silently-failing poll later.
+const COOKIE_CONTROL_CHARS = /[\x00-\x1F\x7F]/
+
 const Body = z.object({
   label: z.string().min(1).max(100),
   url: z.string().url().max(2048),
@@ -76,6 +82,17 @@ export async function POST(req: NextRequest) {
   const parsed = Body.safeParse(json)
   if (!parsed.success) {
     return NextResponse.json({ error: 'bad-request', issues: parsed.error.issues }, { status: 400 })
+  }
+
+  // Reject control chars in the cookie up front with a specific error code,
+  // rather than letting them through and silently stripping in fetch.ts.
+  // Silent stripping wastes user debugging time when an authenticated fetch
+  // mysteriously returns the wrong body; an explicit 400 surfaces the bug.
+  if (typeof parsed.data.cookie === 'string' && COOKIE_CONTROL_CHARS.test(parsed.data.cookie)) {
+    return NextResponse.json(
+      { error: 'invalid-cookie-control-chars', code: 'invalid-cookie-control-chars' },
+      { status: 400 },
+    )
   }
 
   // SSRF guard at create time. Re-checked on every poll too, but reject
