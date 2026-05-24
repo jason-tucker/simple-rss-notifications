@@ -43,6 +43,24 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<Params> }) 
   }
   const ip = clientIp(req)
 
+  // Writing or clearing the stored cookie counts as "changing a stored
+  // secret" per CLAUDE.md §Auth, which requires a fresh re-auth (elevated
+  // session). Non-cookie edits (label, url, enabled, poll interval) stay
+  // unrestricted so a hijacked session still can't silently replace the
+  // victim's stored cookie with one the attacker controls.
+  const touchesCookie =
+    parsed.data.clear_cookie === true ||
+    (typeof parsed.data.cookie === 'string' && parsed.data.cookie.length > 0)
+  if (touchesCookie) {
+    const now = Math.floor(Date.now() / 1000)
+    if (!session.elevatedUntil || session.elevatedUntil < now) {
+      return NextResponse.json(
+        { error: 'reauth-required', code: 'reauth-required' },
+        { status: 403 },
+      )
+    }
+  }
+
   if (parsed.data.url) {
     const ssrf = await checkSafeOutboundUrl(parsed.data.url)
     if (ssrf) return NextResponse.json({ error: ssrf, code: 'ssrf-blocked' }, { status: 400 })
