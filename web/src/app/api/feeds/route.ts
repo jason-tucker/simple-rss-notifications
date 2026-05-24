@@ -5,7 +5,8 @@ import { z } from 'zod'
 import { readSessionCookie } from '@/lib/auth/session'
 import { isSameOrigin } from '@/lib/auth/csrf'
 import { withUser } from '@/lib/db/withUser'
-import { writeAudit } from '@/lib/audit'
+import { encrypt } from '@/lib/crypto/aead'
+import { writeAudit, redactSecretFields } from '@/lib/audit'
 import { clientIp } from '@/lib/ratelimit'
 import { checkSafeOutboundUrl } from '@/lib/ssrf'
 import { notifyFeedsChanged } from '@/lib/db/notify'
@@ -23,6 +24,10 @@ const Body = z.object({
   backfill_mode: z.enum(['none', 'count', 'days']).default('none'),
   backfill_value: z.number().int().min(0).max(10_000).default(0),
   backfill_pace_seconds: z.number().int().min(0).max(24 * 60 * 60).default(0),
+  // Optional `Cookie:` header value, sent on every poll. Encrypted at rest.
+  // 8 KB matches typical browser cookie-jar limits and is plenty for the
+  // multi-cookie strings XenForo / Cloudflare auth produces.
+  cookie: z.string().max(8192).optional(),
 })
 
 export async function GET() {
@@ -37,11 +42,13 @@ export async function GET() {
       last_error: string | null; last_error_at: Date | null
       consecutive_failures: number
       backfill_mode: string; backfill_value: number; backfill_pace_seconds: number
+      has_cookie: boolean
       created_at: Date
     }>(sql`
       SELECT id, label, url, enabled, poll_interval_s,
              last_polled_at, last_success_at, last_error, last_error_at,
              consecutive_failures, backfill_mode, backfill_value, backfill_pace_seconds,
+             (cookie_ciphertext IS NOT NULL) AS has_cookie,
              created_at
       FROM feeds ORDER BY created_at
     `)
@@ -69,14 +76,17 @@ export async function POST(req: NextRequest) {
 
   const ip = clientIp(req)
   return withUser(session.uid, async (tx) => {
+    const enc = parsed.data.cookie && parsed.data.cookie.length > 0 ? encrypt(parsed.data.cookie) : null
     const rows = await tx.execute<{ id: string }>(sql`
       INSERT INTO feeds (
         user_id, label, url, enabled, poll_interval_s,
-        backfill_mode, backfill_value, backfill_pace_seconds
+        backfill_mode, backfill_value, backfill_pace_seconds,
+        cookie_ciphertext, cookie_iv, cookie_tag, cookie_key_version
       ) VALUES (
         ${session.uid}::uuid, ${parsed.data.label}, ${parsed.data.url},
         ${parsed.data.enabled}, ${parsed.data.poll_interval_s},
-        ${parsed.data.backfill_mode}, ${parsed.data.backfill_value}, ${parsed.data.backfill_pace_seconds}
+        ${parsed.data.backfill_mode}, ${parsed.data.backfill_value}, ${parsed.data.backfill_pace_seconds},
+        ${enc?.ciphertext ?? null}, ${enc?.iv ?? null}, ${enc?.tag ?? null}, ${enc?.keyVersion ?? null}
       )
       RETURNING id
     `)
@@ -86,7 +96,7 @@ export async function POST(req: NextRequest) {
       action: 'feed.create',
       target_type: 'feed',
       target_id: id,
-      after: parsed.data,
+      after: redactSecretFields(parsed.data, ['cookie']),
       via: 'web',
       ip,
     })

@@ -5,7 +5,8 @@ import { z } from 'zod'
 import { readSessionCookie } from '@/lib/auth/session'
 import { isSameOrigin } from '@/lib/auth/csrf'
 import { withUser } from '@/lib/db/withUser'
-import { writeAudit } from '@/lib/audit'
+import { encrypt } from '@/lib/crypto/aead'
+import { writeAudit, redactSecretFields } from '@/lib/audit'
 import { clientIp } from '@/lib/ratelimit'
 import { checkSafeOutboundUrl } from '@/lib/ssrf'
 import { notifyFeedsChanged } from '@/lib/db/notify'
@@ -20,6 +21,11 @@ const Patch = z.object({
   url: z.string().url().max(2048).optional(),
   enabled: z.boolean().optional(),
   poll_interval_s: z.number().int().min(POLL_MIN).max(POLL_MAX).optional(),
+  // Omit or empty string = preserve existing cookie (same convention used
+  // by the sink PATCH routes for password / token / api_key). To remove a
+  // previously-set cookie, send `clear_cookie: true`.
+  cookie: z.string().max(8192).optional(),
+  clear_cookie: z.boolean().optional(),
 })
 
 type Params = { id: string }
@@ -43,6 +49,14 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<Params> }) 
   }
 
   return withUser(session.uid, async (tx) => {
+    // Three states: clear, replace, preserve.
+    //   clear_cookie:true → null out all four cookie columns
+    //   non-empty cookie  → encrypt and overwrite
+    //   neither           → leave the columns alone
+    const clearing = parsed.data.clear_cookie === true
+    const enc = !clearing && parsed.data.cookie && parsed.data.cookie.length > 0
+      ? encrypt(parsed.data.cookie)
+      : null
     const rows = await tx.execute<{ id: string }>(sql`
       UPDATE feeds SET
         label           = COALESCE(${parsed.data.label ?? null},            label),
@@ -52,6 +66,22 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<Params> }) 
         -- Resetting URL clears the HTTP cache hints so the next poll starts fresh.
         etag          = CASE WHEN ${parsed.data.url ?? null}::text IS NOT NULL THEN NULL ELSE etag END,
         last_modified = CASE WHEN ${parsed.data.url ?? null}::text IS NOT NULL THEN NULL ELSE last_modified END,
+        cookie_ciphertext  = CASE
+          WHEN ${clearing}::boolean THEN NULL
+          ELSE COALESCE(${enc?.ciphertext ?? null}, cookie_ciphertext)
+        END,
+        cookie_iv          = CASE
+          WHEN ${clearing}::boolean THEN NULL
+          ELSE COALESCE(${enc?.iv ?? null}, cookie_iv)
+        END,
+        cookie_tag         = CASE
+          WHEN ${clearing}::boolean THEN NULL
+          ELSE COALESCE(${enc?.tag ?? null}, cookie_tag)
+        END,
+        cookie_key_version = CASE
+          WHEN ${clearing}::boolean THEN NULL
+          ELSE COALESCE(${enc?.keyVersion ?? null}, cookie_key_version)
+        END,
         updated_at = now()
       WHERE id = ${id}::uuid
       RETURNING id
@@ -62,7 +92,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<Params> }) 
       action: 'feed.update',
       target_type: 'feed',
       target_id: id,
-      after: parsed.data,
+      after: redactSecretFields(parsed.data, ['cookie']),
       via: 'web',
       ip,
     })
