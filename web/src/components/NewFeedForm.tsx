@@ -12,6 +12,7 @@ export function NewFeedForm() {
   const [backfillValue, setBackfillValue] = useState('5')
   const [pacing, setPacing] = useState<'immediate' | 'spaced'>('immediate')
   const [paceSeconds, setPaceSeconds] = useState('60')
+  const [cookie, setCookie] = useState('')
 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -31,6 +32,7 @@ export function NewFeedForm() {
           backfill_mode: backfillMode,
           backfill_value: backfillMode === 'none' ? 0 : Number(backfillValue),
           backfill_pace_seconds: pacing === 'spaced' ? Math.max(0, Number(paceSeconds)) : 0,
+          cookie: cookie.trim() || undefined,
         }),
       })
       if (!res.ok) {
@@ -64,6 +66,32 @@ export function NewFeedForm() {
         <input required type="number" min={1} max={1440} value={pollMinutes} onChange={(e) => setPollMinutes(e.target.value)} className={inputCls} />
         <span className="mt-1 block text-xs text-zinc-500">How often the worker re-checks this feed. Minimum 1 minute.</span>
       </label>
+
+      <details className="rounded border border-zinc-800 p-3">
+        <summary className="cursor-pointer text-xs uppercase tracking-wide text-zinc-500">
+          Authentication (optional)
+        </summary>
+        <div className="mt-3">
+          <label className="block">
+            <span className="text-sm text-zinc-400">Cookie header</span>
+            <textarea
+              value={cookie}
+              onChange={(e) => setCookie(e.target.value)}
+              maxLength={8192}
+              rows={3}
+              spellCheck={false}
+              autoComplete="off"
+              className={inputCls + ' font-mono text-xs'}
+              placeholder="xf_user=…; xf_session=…"
+            />
+            <span className="mt-1 block text-xs text-zinc-500">
+              For feeds that only serve items to logged-in users (XenForo aggregator URLs, paid news, etc.).
+              Paste the cookies from your browser&apos;s DevTools → Application → Cookies. Stored encrypted at rest;
+              sent as the <code className="text-zinc-400">Cookie:</code> header on every poll.
+            </span>
+          </label>
+        </div>
+      </details>
 
       <fieldset className="rounded border border-zinc-800 p-3 space-y-3">
         <legend className="px-2 text-xs uppercase tracking-wide text-zinc-500">Backfill on first poll</legend>
