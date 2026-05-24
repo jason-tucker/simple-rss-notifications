@@ -21,7 +21,7 @@ export type FetchResult =
   | { kind: 'ok'; body: string; etag: string | null; lastModified: string | null }
   | { kind: 'error'; error: string; code: string }
 
-export async function fetchFeed(url: string, opts: { etag?: string | null; lastModified?: string | null } = {}): Promise<FetchResult> {
+export async function fetchFeed(url: string, opts: { etag?: string | null; lastModified?: string | null; cookie?: string | null } = {}): Promise<FetchResult> {
   const ssrf = await checkSafeOutboundUrl(url)
   if (ssrf) return { kind: 'error', error: ssrf, code: 'ssrf-blocked' }
 
@@ -32,6 +32,10 @@ export async function fetchFeed(url: string, opts: { etag?: string | null; lastM
   }
   if (opts.etag) headers['If-None-Match'] = opts.etag
   if (opts.lastModified) headers['If-Modified-Since'] = opts.lastModified
+  // Authenticated feeds (XenForo aggregator, paid news, etc.) need a session
+  // cookie. Trim newlines/CR defensively — the user-pasted value should never
+  // be allowed to inject extra headers.
+  if (opts.cookie) headers['Cookie'] = opts.cookie.replace(/[\r\n]/g, '').trim()
 
   try {
     const res = await fetch(url, {
