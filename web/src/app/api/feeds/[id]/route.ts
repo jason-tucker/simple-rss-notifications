@@ -54,9 +54,37 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<Params> }) 
     //   non-empty cookie  → encrypt and overwrite
     //   neither           → leave the columns alone
     const clearing = parsed.data.clear_cookie === true
-    const enc = !clearing && parsed.data.cookie && parsed.data.cookie.length > 0
-      ? encrypt(parsed.data.cookie)
-      : null
+    const supplyingCookie = !clearing && !!parsed.data.cookie && parsed.data.cookie.length > 0
+    const enc = supplyingCookie ? encrypt(parsed.data.cookie!) : null
+
+    // Origin-lock: if the URL is being changed AND a cookie is currently
+    // stored AND the caller is preserving it (neither clearing nor replacing),
+    // require an explicit decision when the origin changes. Otherwise a stale
+    // example.com session cookie would be shipped to attacker.example on the
+    // next poll. Same-origin URL edits are still allowed silently.
+    if (parsed.data.url && !clearing && !supplyingCookie) {
+      const existing = await tx.execute<{ url: string; has_cookie: boolean }>(sql`
+        SELECT url, (cookie_ciphertext IS NOT NULL) AS has_cookie
+        FROM feeds WHERE id = ${id}::uuid LIMIT 1
+      `)
+      const row = existing[0]
+      if (!row) return NextResponse.json({ error: 'not-found' }, { status: 404 })
+      if (row.has_cookie) {
+        let sameOrigin = false
+        try {
+          sameOrigin = new URL(row.url).origin === new URL(parsed.data.url).origin
+        } catch {
+          sameOrigin = false
+        }
+        if (!sameOrigin) {
+          return NextResponse.json(
+            { error: 'url-change-requires-cookie-decision', code: 'url-change-requires-cookie-decision' },
+            { status: 400 },
+          )
+        }
+      }
+    }
+
     const rows = await tx.execute<{ id: string }>(sql`
       UPDATE feeds SET
         label           = COALESCE(${parsed.data.label ?? null},            label),

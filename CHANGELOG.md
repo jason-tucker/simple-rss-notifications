@@ -5,6 +5,11 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.14.1] — 2026-05-24
+
+### Security
+- **Origin-lock the stored cookie on URL change.** Previously `PATCH /api/feeds/[id]` would let a caller swap `url` to a different origin while preserving the encrypted cookie, so the worker would happily ship a victim's `example.com` session cookie to `attacker.example` on the next poll (browsers normally block this via the cookie's `Domain` attribute; we don't store domains). Now: if the URL origin changes AND a cookie is currently stored AND the caller doesn't supply a replacement (`cookie`) or explicit removal (`clear_cookie: true`), the request is rejected with `400 url-change-requires-cookie-decision`. Same-origin URL edits and any request that explicitly addresses the cookie still pass. Closes #17.
+
 ## [0.14.0] — 2026-05-24 — PR14: per-feed Cookie header for authenticated RSS
 
 ### Added
