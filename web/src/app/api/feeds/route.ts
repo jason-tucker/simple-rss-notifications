@@ -67,6 +67,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'bad-request', issues: parsed.error.issues }, { status: 400 })
   }
 
+  // Storing a cookie counts as "writing a stored secret" per CLAUDE.md
+  // §Auth — require a fresh re-auth (elevated session). Cookie-free creates
+  // stay unrestricted so casual feed adds don't need elevation.
+  if (typeof parsed.data.cookie === 'string' && parsed.data.cookie.length > 0) {
+    const now = Math.floor(Date.now() / 1000)
+    if (!session.elevatedUntil || session.elevatedUntil < now) {
+      return NextResponse.json(
+        { error: 'reauth-required', code: 'reauth-required' },
+        { status: 403 },
+      )
+    }
+  }
+
   // SSRF guard at create time. Re-checked on every poll too, but reject
   // obviously-bad URLs up front so the user sees the error immediately.
   const ssrf = await checkSafeOutboundUrl(parsed.data.url)

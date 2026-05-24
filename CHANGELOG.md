@@ -5,6 +5,13 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.14.2] — 2026-05-24
+
+### Security
+- **Require elevated session to write or clear a feed cookie.** `POST /api/feeds` (when `cookie` is set) and `PATCH /api/feeds/[id]` (when `cookie` or `clear_cookie:true` is set) now reject with `403 reauth-required` unless the session has a current `elevatedUntil` claim. This brings the cookie field in line with CLAUDE.md §Auth's "revealing or changing any stored secret requires re-auth" rule — same protection the SMTP password / Resend key / ntfy token already get implicitly via UI flows. Non-cookie edits (label, url, enabled, poll_interval) stay unrestricted. Closes #18.
+
+  **Caveat for reviewers:** the reauth route that mints `elevatedUntil` is not yet implemented in this repo (no current production route sets `requireElevated:true` either). Landing this fix immediately blocks cookie writes until that route exists. The alternative is to defer this PR until reauth lands — please decide.
+
 ## [0.14.0] — 2026-05-24 — PR14: per-feed Cookie header for authenticated RSS
 
 ### Added
