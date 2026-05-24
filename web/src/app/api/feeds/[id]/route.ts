@@ -7,7 +7,7 @@ import { isSameOrigin } from '@/lib/auth/csrf'
 import { withUser } from '@/lib/db/withUser'
 import { encrypt } from '@/lib/crypto/aead'
 import { writeAudit, redactSecretFields } from '@/lib/audit'
-import { clientIp } from '@/lib/ratelimit'
+import { clientIp, rateLimit } from '@/lib/ratelimit'
 import { checkSafeOutboundUrl } from '@/lib/ssrf'
 import { notifyFeedsChanged } from '@/lib/db/notify'
 
@@ -34,6 +34,18 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<Params> }) 
   if (!isSameOrigin(req)) return NextResponse.json({ error: 'forbidden', code: 'csrf' }, { status: 403 })
   const session = await readSessionCookie()
   if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+
+  // CLAUDE.md §11: every write API route has a per-user rate limit. PATCH
+  // can do an AES-encrypted column rewrite + audit log row per request; cap
+  // at 30/min/user (more permissive than POST since enable/disable toggles
+  // are reasonable to spam).
+  const rl = await rateLimit(`feeds:update:user:${session.uid}`, { limit: 30, windowMs: 60_000 })
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'rate-limited', code: 'rate-limited', retryAfterSec: rl.retryAfterSec },
+      { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) } },
+    )
+  }
 
   const { id } = await ctx.params
   const json = await req.json().catch(() => null)
@@ -133,6 +145,16 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<Params> })
   if (!isSameOrigin(req)) return NextResponse.json({ error: 'forbidden', code: 'csrf' }, { status: 403 })
   const session = await readSessionCookie()
   if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+
+  // CLAUDE.md §11: per-user rate limit on every write route. DELETE cascades
+  // through feed_items / routes / dispatches — cap at 30/min/user.
+  const rl = await rateLimit(`feeds:delete:user:${session.uid}`, { limit: 30, windowMs: 60_000 })
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'rate-limited', code: 'rate-limited', retryAfterSec: rl.retryAfterSec },
+      { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) } },
+    )
+  }
 
   const { id } = await ctx.params
   const ip = clientIp(req)

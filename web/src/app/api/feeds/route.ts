@@ -7,7 +7,7 @@ import { isSameOrigin } from '@/lib/auth/csrf'
 import { withUser } from '@/lib/db/withUser'
 import { encrypt } from '@/lib/crypto/aead'
 import { writeAudit, redactSecretFields } from '@/lib/audit'
-import { clientIp } from '@/lib/ratelimit'
+import { clientIp, rateLimit } from '@/lib/ratelimit'
 import { checkSafeOutboundUrl } from '@/lib/ssrf'
 import { notifyFeedsChanged } from '@/lib/db/notify'
 
@@ -60,6 +60,17 @@ export async function POST(req: NextRequest) {
   if (!isSameOrigin(req)) return NextResponse.json({ error: 'forbidden', code: 'csrf' }, { status: 403 })
   const session = await readSessionCookie()
   if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+
+  // CLAUDE.md §11: every write API route has a per-user rate limit. POST
+  // creates a row + AES-encrypted column + audit log row; cap at 10/min/user
+  // so a hijacked session can't flood the DB or burn AES cycles.
+  const rl = await rateLimit(`feeds:create:user:${session.uid}`, { limit: 10, windowMs: 60_000 })
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: 'rate-limited', code: 'rate-limited', retryAfterSec: rl.retryAfterSec },
+      { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) } },
+    )
+  }
 
   const json = await req.json().catch(() => null)
   const parsed = Body.safeParse(json)
