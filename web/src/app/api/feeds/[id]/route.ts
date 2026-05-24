@@ -68,6 +68,18 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<Params> }) 
     )
   }
 
+  // Whitespace-only cookie collapses to "not supplied" so it falls into the
+  // existing preserve path below (cookie omitted = leave the stored value
+  // alone) instead of being encrypted as useless whitespace. Non-empty values
+  // get trimmed so a stray space at the end of a paste doesn't corrupt the
+  // Cookie header on the next poll. See POST in ../route.ts for rationale.
+  const trimmed = parsed.data.cookie?.trim()
+  if (trimmed === '') {
+    parsed.data.cookie = undefined
+  } else if (trimmed) {
+    parsed.data.cookie = trimmed
+  }
+
   if (parsed.data.url) {
     const ssrf = await checkSafeOutboundUrl(parsed.data.url)
     if (ssrf) return NextResponse.json({ error: ssrf, code: 'ssrf-blocked' }, { status: 400 })
