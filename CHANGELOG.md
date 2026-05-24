@@ -5,6 +5,11 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.14.4] — 2026-05-24
+
+### Security
+- **Reject whitespace-only cookies at the API write boundary.** `POST` / `PATCH /api/feeds` accepted values like `"   "` because Zod sees length <= 8192 and the control-char regex from #20 doesn't reject `0x20` (space). The whitespace was then encrypted and shipped on every poll as `Cookie:    `, while the UI confidently showed the green "cookie set" badge for a value that does nothing — a guaranteed silent-failure path with no debugging breadcrumb for the user. Both routes now trim the cookie up front: an empty result collapses to `undefined` (POST stores no ciphertext, PATCH falls into the existing preserve path), and non-empty values are stored trimmed so a stray space at the end of a paste can't corrupt the header. Closes #26.
+
 ## [0.14.3] — 2026-05-24
 
 ### Security

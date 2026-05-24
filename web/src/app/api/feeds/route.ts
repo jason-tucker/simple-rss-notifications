@@ -95,6 +95,20 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  // Treat a whitespace-only cookie as "not supplied" — without this, a value
+  // like "   " passes Zod (length <= 8192) and the C0/DEL check (space is
+  // 0x20, outside the rejected range), gets encrypted, and ships on every
+  // poll as `Cookie:    `. The UI then shows the green "cookie set" badge
+  // for a value that does nothing and the user has no idea why authenticated
+  // feeds aren't working. Trim non-empty values too so a stray space at the
+  // end of a paste doesn't quietly corrupt the header.
+  const trimmed = parsed.data.cookie?.trim()
+  if (trimmed === '') {
+    parsed.data.cookie = undefined
+  } else if (trimmed) {
+    parsed.data.cookie = trimmed
+  }
+
   // SSRF guard at create time. Re-checked on every poll too, but reject
   // obviously-bad URLs up front so the user sees the error immediately.
   const ssrf = await checkSafeOutboundUrl(parsed.data.url)
