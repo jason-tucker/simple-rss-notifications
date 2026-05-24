@@ -16,10 +16,10 @@ export const dynamic = 'force-dynamic'
 const POLL_MIN = 60
 const POLL_MAX = 24 * 60 * 60
 
-// C0 controls (NUL through US, incl. TAB / CR / LF) + DEL. Forbidden inside
-// a Cookie header value per RFC 6265 §4.1.1 cookie-octet. See POST handler
-// in ../route.ts for rationale.
-const COOKIE_CONTROL_CHARS = /[\x00-\x1F\x7F]/
+// Forbidden inside a Cookie header value per RFC 6265 §4.1.1 cookie-octet:
+// C0 controls + DEL + C1 controls + U+2028 / U+2029. See POST handler in
+// ../route.ts for rationale.
+const COOKIE_CONTROL_CHARS = /[\x00-\x1F\x7F-\x9F  ]/u
 
 const Patch = z.object({
   label: z.string().min(1).max(100).optional(),
