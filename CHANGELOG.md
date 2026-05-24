@@ -5,6 +5,23 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.14.0] — 2026-05-24 — PR14: per-feed Cookie header for authenticated RSS
+
+### Added
+- **Optional `Cookie:` header per feed.** Some RSS sources (XenForo's per-user aggregator `/forums/-/index.rss`, paid news feeds, anything behind a session) only serve items to logged-in requesters. You can now paste the relevant `Cookie:` value in the feed create / edit form and the worker will send it on every poll.
+- **Encrypted at rest** with AES-256-GCM — same 4-column layout (`cookie_ciphertext` / `cookie_iv` / `cookie_tag` / `cookie_key_version`) the SMTP password and ntfy token use. NULL ciphertext = "no cookie, fetch unauthenticated", same as before.
+- **Migration 0011** (`0011_feeds_cookie.sql`) adds the four nullable columns to `feeds`.
+- **Edit form** shows "cookie set" and an explicit "Remove the saved cookie" checkbox when one is stored; omitting the field preserves the existing value (same convention the sink PATCH routes use for password / api_key / token).
+- **CR/LF stripped** from the cookie value before it goes on the wire so a pasted multi-line cookie can't inject extra headers.
+- **Decrypt failure surfaces as a feed error** — if the encryption key rotates and the stored cookie can't be decoded, the feed gets `last_error = "cookie decryption failed (key mismatch?)"` and shows in the Feed Health banner instead of silently returning an empty body.
+
+### Why
+- NewDay's forum RSS (`https://newdayrp.com/forums/-/index.rss`) returns an empty 624-byte channel stub to unauthenticated requests — they've disabled per-subforum RSS and gated the aggregator behind a session. Without cookie support there's no way to read it from the worker. This is a one-feed pain point today but the same pattern hits XenForo, Discourse, Patreon, anything WordPress-with-paywall-plugin, etc.
+
+### Audit / security
+- `cookie` is redacted to `[REDACTED]` in audit log entries (added `redactSecretFields(parsed.data, ['cookie'])` to both the feed create and update paths — those routes previously didn't redact because there were no secret fields).
+- `GET /api/feeds` returns `has_cookie: boolean` derived from `cookie_ciphertext IS NOT NULL`; the ciphertext itself never leaves the server.
+
 ## [0.13.0] — 2026-05-23 — PR13: notification formatting overhaul
 
 ### Added — `lib/rss/format.ts`
