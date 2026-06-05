@@ -38,10 +38,10 @@ Secrets live in `.env` (gitignored) or in the DB encrypted at rest with AES-256-
 Small, frequent commits with clear messages. Do not batch a day's work into one giant commit. Each commit message starts with a verb in present tense ("add", "fix", "wire up", "rate-limit"…).
 
 ### 10. Dynamic config — no restarts
-Adding/editing/deleting feeds, routes, sinks, or credentials in the UI must NOT require restarting any container. The worker reacts to `pg_notify('config_changed', …)` and additionally falls back to a 60-second `updated_at > worker_last_tick` poll.
+Adding/editing/deleting feeds, routes, sinks, or credentials in the UI must NOT require restarting any container. The worker `LISTEN`s on `pg_notify('feeds_changed', …)` (feed/route/destination CRUD) and `pg_notify('dispatches_changed', …)` (retry button) and additionally falls back to a 5-second safety-net poll (`IDLE_SLEEP_MS`) as a backstop. See `lib/db/notify.ts` (emitters) and `worker/notify.ts` + `worker/index.ts` (subscriber + loop).
 
 ### 11. Rate limit every API route
-Every API handler is wrapped in `withRateLimit(handler, {bucket, limit, windowMs})`. Login/reauth/password-change use stricter limits than authenticated GETs. See `lib/ratelimit.ts`.
+Authenticated routes get a per-user + per-IP limit via `rateLimit()` invoked inside `withAuth()`; sensitive unauthenticated handlers (login/reauth/password-change) call `rateLimit()` / `rateLimitAll()` directly with stricter buckets. There is no `withRateLimit` wrapper. See `lib/ratelimit.ts`.
 
 ### 12. Error handling beyond happy path
 Every external call (HTTP fetch, SMTP send, Resend API, ntfy fetch, DB write) is wrapped in try/catch with structured logging. Failures surface to the user via the `dispatches.error` column and a retry button — they never fail silently.
@@ -89,7 +89,7 @@ Compose `up -d` recreates containers whenever the compose file or env changes. c
 
 | What | Where |
 |---|---|
-| New API route | `web/src/app/api/<resource>/route.ts` — wrap in `withAuth(handler, {requireElevated?})` and `withRateLimit(...)` |
+| New API route | `web/src/app/api/<resource>/route.ts` — wrap in `withAuth(handler, {requireElevated?, rateLimitPerUser?, rateLimitPerIp?})` (which applies the rate limit); unauthenticated routes call `rateLimit()` / `rateLimitAll()` directly |
 | New page | `web/src/app/<area>/page.tsx` — gate via `getSession()` in the layout/page |
 | New DB table | `web/src/lib/db/schema/<name>.ts` — add RLS policies in the migration |
 | New worker task | `web/src/worker/<task>.ts` — register in `web/src/worker/index.ts` |
