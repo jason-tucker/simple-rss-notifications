@@ -5,6 +5,15 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.13.1] — 2026-06-05
+
+### Docs
+- Restructured `README.md` to the shared project structure (Overview / Architecture / Stack / Quick start / Configuration / Usage / Deployment / Conventions) and fixed several stale claims against the current code:
+  - Worker `LISTEN`s on **`feeds_changed`** + **`dispatches_changed`** with a **5-second** safety-net idle poll — corrected from the old `config_changed` / 60-second description.
+  - Rate limiting is `rateLimit()` / `rateLimitAll()` (`web/src/lib/ratelimit.ts`) invoked inside `withAuth()` and sensitive handlers — there is no `withRateLimit` wrapper.
+  - Documented all four sink types — SMTP (nodemailer), Resend (REST), ntfy, and Discord webhook — and marked `ntfy → email` / `email → ntfy` as planned (not yet implemented).
+- Added a `description` field to `web/package.json`.
+
 ## [0.13.0] — 2026-05-23 — PR13: notification formatting overhaul
 
 ### Added — `lib/rss/format.ts`
