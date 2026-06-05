@@ -5,6 +5,16 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.13.2] — 2026-06-05
+
+### Docs
+- Reconciled `CLAUDE.md` with the current code (mirrors the README fixes in 0.13.1):
+  - **Rule 10 (Dynamic config):** the worker `LISTEN`s on **`feeds_changed`** + **`dispatches_changed`** with a **5-second** `IDLE_SLEEP_MS` safety-net poll — corrected from the old `config_changed` / 60-second description. Pointed at `lib/db/notify.ts`, `worker/notify.ts`, and `worker/index.ts`.
+  - **Rule 11 (Rate limiting)** and the **"Where to add things"** table: rate limiting is `rateLimit()` / `rateLimitAll()` (`web/src/lib/ratelimit.ts`) invoked inside `withAuth()` (per-user + per-IP) and called directly in sensitive unauthenticated handlers — there is no `withRateLimit` wrapper.
+
+### Ops
+- Watchtower image: confirmed `docker-compose.yml` carries **no per-stack watchtower service** and **no `containrrr/watchtower:latest` image directive** — auto-deploy relies on the host-wide `nickfedor/watchtower` (maintained fork; `containrrr/watchtower:latest` no longer speaks this VPS's Docker API) that polls every container labelled `com.centurylinklabs.watchtower.enable=true`. The `caddy`, `web`, and `worker` services all carry that label, so they are picked up automatically; no compose change was required.
+
 ## [0.13.1] — 2026-06-05
 
 ### Docs
