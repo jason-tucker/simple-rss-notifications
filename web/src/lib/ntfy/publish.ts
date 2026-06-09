@@ -1,10 +1,11 @@
 import 'server-only'
 import type { SinkNtfy } from '@/lib/db/schema'
 import { decrypt } from '@/lib/crypto/aead'
-import { checkSafeOutboundUrl } from '@/lib/ssrf'
+import { safeFetch, SsrfBlockedError, readCappedText } from '@/lib/ssrf'
 import type { SendResult } from '@/lib/email/send'
 
 const NTFY_TIMEOUT_MS = 15_000
+const MAX_ERROR_BODY_BYTES = 8 * 1024
 
 export interface NtfyPublishArgs {
   /** Becomes the ntfy `Title:` header. Falls back to topic name if missing. */
@@ -39,9 +40,6 @@ export async function publishToNtfy(sink: SinkNtfy, args: NtfyPublishArgs): Prom
   const base = sink.server_url.replace(/\/+$/, '')
   const url = `${base}/${encodeURIComponent(sink.topic)}`
 
-  const ssrf = await checkSafeOutboundUrl(url)
-  if (ssrf) return { ok: false, error: ssrf, code: 'ssrf-blocked' }
-
   let token: string | null = null
   if (sink.token_ciphertext && sink.token_iv && sink.token_tag && sink.token_key_version != null) {
     try {
@@ -74,23 +72,27 @@ export async function publishToNtfy(sink: SinkNtfy, args: NtfyPublishArgs): Prom
   if (tags) {
     headers['Tags'] = sanitizeHeader(tags)
   }
+  // `args.click` is a feed item link (attacker-controlled). Strip CR/LF +
+  // control chars to prevent header injection, and only forward it when it's
+  // a real http(s) URL — otherwise drop it.
   if (args.click) {
-    headers['Click'] = args.click
+    const click = sanitizeHeader(args.click)
+    if (isHttpUrl(click)) headers['Click'] = click
   }
   if (token) {
     headers['Authorization'] = `Bearer ${token}`
   }
 
   try {
-    const res = await fetch(url, {
+    const res = await safeFetch(url, {
       method: 'POST',
       headers,
       body: args.message,
-      signal: AbortSignal.timeout(NTFY_TIMEOUT_MS),
+      timeoutMs: NTFY_TIMEOUT_MS,
     })
 
     if (!res.ok) {
-      const text = await res.text().catch(() => '')
+      const text = await readCappedText(res.body, MAX_ERROR_BODY_BYTES).catch(() => '')
       return {
         ok: false,
         error: text.slice(0, 500) || `HTTP ${res.status}`,
@@ -100,14 +102,33 @@ export async function publishToNtfy(sink: SinkNtfy, args: NtfyPublishArgs): Prom
 
     // ntfy returns JSON with {id, time, ...}. We treat id as the provider
     // message id for audit log + dispatch tracking.
-    const data = (await res.json().catch(() => ({}))) as { id?: string }
-    return { ok: true, providerMessageId: data.id }
+    const text = await readCappedText(res.body, MAX_ERROR_BODY_BYTES).catch(() => '')
+    let id: string | undefined
+    try {
+      id = (JSON.parse(text) as { id?: string }).id
+    } catch {
+      id = undefined
+    }
+    return { ok: true, providerMessageId: id }
   } catch (err) {
-    // NEVER stringify the error verbatim — node-fetch errors may include
-    // the full request URL with Authorization in some debug builds.
-    // Only the message field is included in the response.
+    if (err instanceof SsrfBlockedError) {
+      return { ok: false, error: err.message, code: 'ssrf-blocked' }
+    }
+    // NEVER stringify the error verbatim — errors may include the full
+    // request URL with the Authorization header in some builds. Only the
+    // message field (never the token) is included in the response.
     const message = err instanceof Error ? err.message : 'fetch failed'
     return { ok: false, error: message, code: 'ntfy-network' }
+  }
+}
+
+/** True if `s` parses as an http(s) URL. */
+function isHttpUrl(s: string): boolean {
+  try {
+    const u = new URL(s)
+    return u.protocol === 'http:' || u.protocol === 'https:'
+  } catch {
+    return false
   }
 }
 

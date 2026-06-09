@@ -2,6 +2,30 @@ import 'server-only'
 import nodemailer from 'nodemailer'
 import type { SinkSmtp, SinkResend } from '@/lib/db/schema'
 import { decrypt } from '@/lib/crypto/aead'
+import { isPrivateHost, readCappedText } from '@/lib/ssrf'
+
+const MAX_ERROR_BODY_BYTES = 8 * 1024
+
+// SMTP connection-level error codes that, if surfaced verbatim, turn the
+// dispatcher into an internal port-scan oracle (refused vs. timed out vs.
+// no-such-host distinguishes open/closed/filtered ports + DNS existence).
+// We collapse all of these to one generic message; the real code/message
+// stays in server logs only.
+const SMTP_CONNECTION_ERROR_CODES = new Set([
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'ECONNRESET',
+  'EHOSTDOWN',
+  'EPIPE',
+  'ESOCKET',
+  'ECONNECTION',
+  'ETLS',
+])
+const GENERIC_SMTP_CONNECTION_ERROR = 'could not connect to the SMTP server'
 
 /**
  * Outbound email adapter. Two backends:
@@ -62,6 +86,19 @@ export async function sendViaSmtp(sink: SinkSmtp, args: SendArgs): Promise<SendR
     return { ok: false, error: 'SMTP password not set', code: 'sink-incomplete' }
   }
 
+  // SSRF guard: nodemailer connects straight to host:port, so we must reject
+  // private/reserved/internal hosts BEFORE constructing the transport.
+  // Otherwise a user could point us at db:5432 / 169.254.169.254 / 127.0.0.1
+  // and use connection behavior as a probe.
+  try {
+    if (await isPrivateHost(sink.host)) {
+      return { ok: false, error: 'SMTP host is not allowed', code: 'ssrf-blocked' }
+    }
+  } catch {
+    // Resolution failure → refuse rather than connect.
+    return { ok: false, error: 'SMTP host could not be validated', code: 'ssrf-blocked' }
+  }
+
   const transport = nodemailer.createTransport({
     host: sink.host,
     port: sink.port,
@@ -88,8 +125,15 @@ export async function sendViaSmtp(sink: SinkSmtp, args: SendArgs): Promise<SendR
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     // Nodemailer surfaces a `code` on most transport errors (EAUTH, ECONNECTION,
-    // ETIMEDOUT, EENVELOPE for bad from/to). Pull it through verbatim.
+    // ETIMEDOUT, EENVELOPE for bad from/to).
     const code = (err as { code?: string } | null)?.code ?? 'smtp-error'
+    // Kill the port-scan oracle: connection-level failures all collapse to a
+    // single generic message so the caller can't distinguish refused vs.
+    // timed-out vs. unknown-host. The detailed code/message stays server-side.
+    if (SMTP_CONNECTION_ERROR_CODES.has(code)) {
+      console.error('[email] SMTP connection error', { host: sink.host, port: sink.port, code, message })
+      return { ok: false, error: GENERIC_SMTP_CONNECTION_ERROR, code: 'smtp-connection' }
+    }
     return { ok: false, error: message, code }
   } finally {
     transport.close()
@@ -97,6 +141,11 @@ export async function sendViaSmtp(sink: SinkSmtp, args: SendArgs): Promise<SendR
 }
 
 const RESEND_URL = 'https://api.resend.com/emails'
+
+/** Read a fetch Response body as text with a hard byte cap. */
+function readCappedResponseText(res: Response): Promise<string> {
+  return readCappedText(res.body as ReadableStream<Uint8Array> | null, MAX_ERROR_BODY_BYTES)
+}
 
 export async function sendViaResend(sink: SinkResend, args: SendArgs): Promise<SendResult> {
   if (sink.incomplete) {
@@ -140,11 +189,17 @@ export async function sendViaResend(sink: SinkResend, args: SendArgs): Promise<S
       signal: AbortSignal.timeout(20_000),
     })
     if (!res.ok) {
-      const text = await res.text().catch(() => '')
+      const text = await readCappedResponseText(res).catch(() => '')
       return { ok: false, error: text.slice(0, 500), code: `resend-http-${res.status}` }
     }
-    const data = (await res.json().catch(() => ({}))) as { id?: string }
-    return { ok: true, providerMessageId: data.id }
+    const text = await readCappedResponseText(res).catch(() => '')
+    let id: string | undefined
+    try {
+      id = (JSON.parse(text) as { id?: string }).id
+    } catch {
+      id = undefined
+    }
+    return { ok: true, providerMessageId: id }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     return { ok: false, error: message, code: 'resend-network' }
