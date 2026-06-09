@@ -2,8 +2,12 @@
 #   - web service:     `node server.js`               (Next.js standalone)
 #   - worker service:  `node dist/worker/index.js`    (esbuild-bundled)
 
+# Base image pinned to a specific patch tag (not floating `22-alpine`) so a
+# rebuild can't silently swap the base out from under us. Bump deliberately.
+# Follow-up: pin by `@sha256:` digest + verify with cosign once a digest can be
+# resolved in CI.
 # ─── deps ────────────────────────────────────────────────────────────
-FROM node:22-alpine AS deps
+FROM node:22.13.1-alpine AS deps
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml* ./
@@ -11,7 +15,7 @@ RUN if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; \
     else pnpm install --no-frozen-lockfile; fi
 
 # ─── builder ─────────────────────────────────────────────────────────
-FROM node:22-alpine AS builder
+FROM node:22.13.1-alpine AS builder
 WORKDIR /app
 RUN corepack enable
 COPY --from=deps /app/node_modules ./node_modules
@@ -36,7 +40,7 @@ ENV PUBLIC_BASE_URL=http://localhost:3000
 RUN pnpm build
 
 # ─── runner ──────────────────────────────────────────────────────────
-FROM node:22-alpine AS runner
+FROM node:22.13.1-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
