@@ -1,4 +1,5 @@
 import 'server-only'
+import { isSafeUrl } from '@/lib/url'
 
 /**
  * RSS items frequently ship `<description>` / `<content:encoded>` as raw
@@ -128,14 +129,6 @@ const ALLOWED_ATTRS_BY_TAG: Record<string, Set<string>> = {
   img: new Set(['src', 'alt', 'title', 'width', 'height']),
   td: new Set(['colspan', 'rowspan']),
   th: new Set(['colspan', 'rowspan', 'scope']),
-}
-
-function isSafeUrl(url: string): boolean {
-  const u = url.trim().toLowerCase()
-  if (u.startsWith('http://') || u.startsWith('https://') || u.startsWith('mailto:')) return true
-  // Relative URLs (no scheme) — leave as-is; they're harmless without a base.
-  if (!u.includes(':')) return true
-  return false
 }
 
 /**
