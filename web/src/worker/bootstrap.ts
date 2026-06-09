@@ -13,6 +13,10 @@ type Logger = (msg: string, extra?: Record<string, unknown>) => void
  *
  * Set BOOTSTRAP_USERNAME=skip in .env to disable all seeding entirely.
  *
+ * BOOTSTRAP_PASSWORD must be a non-empty value other than 'admin'. If it is
+ * unset/empty or the known-weak default, seedUser() logs a FATAL message and
+ * skips creating the admin user (rather than shipping default credentials).
+ *
  * Markers:
  *   bootstrap_completed_at  — user row created (PR3)
  *   ionos_sink_seeded_at    — IONOS SMTP sink row created (PR4)
@@ -61,8 +65,23 @@ async function seedUser(log: Logger): Promise<void> {
     return
   }
 
+  // Refuse to seed an admin with a weak/known password. BOOTSTRAP_PASSWORD has
+  // no default (see lib/env.ts); enforcing it here keeps `next build` working
+  // in CI while making a default-credentials admin impossible to ship silently.
+  const bootstrapPassword = env.BOOTSTRAP_PASSWORD
+  if (!bootstrapPassword || bootstrapPassword.trim().toLowerCase() === 'admin') {
+    log('bootstrap-user-skipped', {
+      reason: 'fatal-weak-or-missing-bootstrap-password',
+      detail:
+        'FATAL: BOOTSTRAP_PASSWORD is unset, empty, or the known-weak default "admin". ' +
+        'Refusing to create the bootstrap admin user. Set a strong BOOTSTRAP_PASSWORD ' +
+        'in .env (scripts/install.sh generates one) and restart the worker.',
+    })
+    return
+  }
+
   const username = env.BOOTSTRAP_USERNAME.trim().toLowerCase()
-  const hash = await hashPassword(env.BOOTSTRAP_PASSWORD)
+  const hash = await hashPassword(bootstrapPassword)
 
   await db.transaction(async (tx) => {
     await tx.execute(sql`

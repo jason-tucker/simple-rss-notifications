@@ -27,7 +27,13 @@ const schema = z.object({
   PUBLIC_BASE_URL: z.string().url(),
 
   BOOTSTRAP_USERNAME: z.string().default('tucker'),
-  BOOTSTRAP_PASSWORD: z.string().default('admin'),
+  // Username is not a secret, so it keeps a default. The password must NOT —
+  // a known default ('admin') would silently create an internet-facing admin
+  // login. It is intentionally optional here (no default) so `next build` in
+  // CI does not require it; the safety check (unset/empty or 'admin' rejected)
+  // is enforced at the use site in worker/bootstrap.ts. Supply a strong value
+  // at deploy time (scripts/install.sh generates one).
+  BOOTSTRAP_PASSWORD: z.string().min(1).optional(),
 
   NODE_ENV: z.enum(['development', 'production', 'test']).default('production'),
 })
