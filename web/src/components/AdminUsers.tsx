@@ -15,6 +15,7 @@ const ERRORS: Record<string, string> = {
   'invalid-username': 'Usernames must start with a letter or number and use only a–z, 0–9, dot, dash or underscore.',
   'last-admin': "You can't remove the last admin — promote another user first.",
   'cannot-delete-self': "You can't delete your own account.",
+  'cannot-demote-self': "You can't remove your own admin role — another admin has to do it.",
   'rate-limited': 'Too many requests — slow down a moment and try again.',
   'bad-request': 'Some fields were invalid.',
   forbidden: 'You are not allowed to do that.',
@@ -222,19 +223,21 @@ export function AdminUsers({ currentUserId, initialUsers }: { currentUserId: str
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <button
-                    disabled={busy}
-                    onClick={() =>
-                      patchUser(
-                        u.id,
-                        { is_admin: !u.is_admin },
-                        `${u.username} is ${u.is_admin ? 'no longer' : 'now'} an admin.`,
-                      )
-                    }
-                    className="rounded border border-zinc-700 px-2 py-1 text-zinc-300 hover:border-zinc-500 disabled:opacity-50"
-                  >
-                    {u.is_admin ? 'Remove admin' : 'Make admin'}
-                  </button>
+                  {!self && (
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        patchUser(
+                          u.id,
+                          { is_admin: !u.is_admin },
+                          `${u.username} is ${u.is_admin ? 'no longer' : 'now'} an admin.`,
+                        )
+                      }
+                      className="rounded border border-zinc-700 px-2 py-1 text-zinc-300 hover:border-zinc-500 disabled:opacity-50"
+                    >
+                      {u.is_admin ? 'Remove admin' : 'Make admin'}
+                    </button>
+                  )}
                   <button
                     disabled={busy}
                     onClick={() => resetPassword(u)}

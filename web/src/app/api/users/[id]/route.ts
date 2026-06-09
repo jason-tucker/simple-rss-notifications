@@ -33,10 +33,8 @@ async function loadTarget(id: string) {
   return rows[0] ?? null
 }
 
-async function adminCount(): Promise<number> {
-  const rows = await db.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM users WHERE is_admin`)
-  return rows[0]?.n ?? 0
-}
+/** Thrown inside a transaction to roll it back and signal a last-admin block. */
+class LastAdminError extends Error {}
 
 export async function PATCH(req: NextRequest, ctx: { params: Promise<Params> }) {
   if (!isSameOrigin(req)) return NextResponse.json({ error: 'forbidden', code: 'csrf' }, { status: 403 })
@@ -64,26 +62,50 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<Params> }) 
   const target = await loadTarget(id)
   if (!target) return NextResponse.json({ error: 'not-found', code: 'not-found' }, { status: 404 })
 
-  // Never let the system lose its last admin: block demoting the only admin.
-  if (parsed.data.is_admin === false && target.is_admin && (await adminCount()) <= 1) {
-    return NextResponse.json({ error: 'last-admin', code: 'last-admin' }, { status: 400 })
+  // Can't demote yourself — mirrors the self-delete guard, and avoids the
+  // confusing "I removed my own admin and got bounced out of this page" state.
+  // Another admin has to demote you.
+  if (id === gate.session.uid && parsed.data.is_admin === false) {
+    return NextResponse.json({ error: 'cannot-demote-self', code: 'cannot-demote-self' }, { status: 400 })
   }
 
-  const sets: SQL[] = []
-  if (parsed.data.is_admin !== undefined) sets.push(sql`is_admin = ${parsed.data.is_admin}`)
-  if (parsed.data.must_change_password !== undefined) {
-    sets.push(sql`must_change_password = ${parsed.data.must_change_password}`)
-  }
-  if (parsed.data.password !== undefined) {
-    const password_hash = await hashPassword(parsed.data.password)
-    sets.push(sql`password_hash = ${password_hash}`)
-    // Bump password_changed_at so the target's existing JWTs are invalidated
-    // (the same revocation channel login/withAuth check against iat).
-    sets.push(sql`password_changed_at = now()`)
-  }
-  sets.push(sql`updated_at = now()`)
+  // Hash before opening the transaction so argon2 (~50ms) doesn't hold the
+  // admin-row lock.
+  const password_hash =
+    parsed.data.password === undefined ? undefined : await hashPassword(parsed.data.password)
 
-  await db.execute(sql`UPDATE users SET ${sql.join(sets, sql`, `)} WHERE id = ${id}::uuid`)
+  try {
+    await db.transaction(async (tx) => {
+      // Lock every admin row up front so concurrent demotes/deletes serialize.
+      // Without it, two requests can both see count > 1 and both demote, dropping
+      // the system to zero admins (a TOCTOU race). count(*) can't take FOR
+      // UPDATE, so we lock the rows themselves and count them.
+      const admins = await tx.execute<{ id: string }>(sql`SELECT id FROM users WHERE is_admin FOR UPDATE`)
+      const removesLastAdmin =
+        parsed.data.is_admin === false && admins.length <= 1 && admins.some((a) => a.id === id)
+      if (removesLastAdmin) throw new LastAdminError()
+
+      const sets: SQL[] = []
+      if (parsed.data.is_admin !== undefined) sets.push(sql`is_admin = ${parsed.data.is_admin}`)
+      if (parsed.data.must_change_password !== undefined) {
+        sets.push(sql`must_change_password = ${parsed.data.must_change_password}`)
+      }
+      if (password_hash !== undefined) {
+        sets.push(sql`password_hash = ${password_hash}`)
+        // Bump password_changed_at so the target's existing JWTs are invalidated
+        // (the same revocation channel login/withAuth check against iat).
+        sets.push(sql`password_changed_at = now()`)
+      }
+      sets.push(sql`updated_at = now()`)
+
+      await tx.execute(sql`UPDATE users SET ${sql.join(sets, sql`, `)} WHERE id = ${id}::uuid`)
+    })
+  } catch (err) {
+    if (err instanceof LastAdminError) {
+      return NextResponse.json({ error: 'last-admin', code: 'last-admin' }, { status: 400 })
+    }
+    throw err
+  }
 
   void writeAudit({
     actor_user_id: gate.session.uid,
@@ -129,14 +151,23 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<Params> })
   const target = await loadTarget(id)
   if (!target) return NextResponse.json({ error: 'not-found', code: 'not-found' }, { status: 404 })
 
-  // Block deleting the last remaining admin.
-  if (target.is_admin && (await adminCount()) <= 1) {
-    return NextResponse.json({ error: 'last-admin', code: 'last-admin' }, { status: 400 })
-  }
-
   // Deleting a user cascades their feeds/routes/sinks/dispatches/sessions via
   // the ON DELETE CASCADE FKs; audit_log rows keep the action with a NULL actor.
-  await db.execute(sql`DELETE FROM users WHERE id = ${id}::uuid`)
+  // Lock the admin rows + recheck inside the txn so concurrent deletes can't
+  // race the last admin away (same TOCTOU guard as PATCH).
+  try {
+    await db.transaction(async (tx) => {
+      const admins = await tx.execute<{ id: string }>(sql`SELECT id FROM users WHERE is_admin FOR UPDATE`)
+      const removesLastAdmin = admins.length <= 1 && admins.some((a) => a.id === id)
+      if (removesLastAdmin) throw new LastAdminError()
+      await tx.execute(sql`DELETE FROM users WHERE id = ${id}::uuid`)
+    })
+  } catch (err) {
+    if (err instanceof LastAdminError) {
+      return NextResponse.json({ error: 'last-admin', code: 'last-admin' }, { status: 400 })
+    }
+    throw err
+  }
 
   void writeAudit({
     actor_user_id: gate.session.uid,
