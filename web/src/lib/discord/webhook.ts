@@ -1,10 +1,11 @@
 import 'server-only'
 import type { SinkDiscordWebhook } from '@/lib/db/schema'
 import { decrypt } from '@/lib/crypto/aead'
-import { checkSafeOutboundUrl } from '@/lib/ssrf'
+import { safeFetch, SsrfBlockedError, readCappedText } from '@/lib/ssrf'
 import type { SendResult } from '@/lib/email/send'
 
 const DISCORD_TIMEOUT_MS = 15_000
+const MAX_ERROR_BODY_BYTES = 8 * 1024
 
 export interface DiscordPublishArgs {
   /** Becomes the embed title (when use_embeds=true) or the prefix in content. */
@@ -64,9 +65,6 @@ export async function publishToDiscord(sink: SinkDiscordWebhook, args: DiscordPu
     return { ok: false, error: 'Discord webhook URL not set', code: 'sink-incomplete' }
   }
 
-  const ssrf = await checkSafeOutboundUrl(url)
-  if (ssrf) return { ok: false, error: ssrf, code: 'ssrf-blocked' }
-
   // Discord's `wait=true` makes the POST synchronous and returns the
   // posted message JSON so we can capture the message id for audit.
   const finalUrl = url.includes('?') ? `${url}&wait=true` : `${url}?wait=true`
@@ -94,15 +92,15 @@ export async function publishToDiscord(sink: SinkDiscordWebhook, args: DiscordPu
   }
 
   try {
-    const res = await fetch(finalUrl, {
+    const res = await safeFetch(finalUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(DISCORD_TIMEOUT_MS),
+      timeoutMs: DISCORD_TIMEOUT_MS,
     })
 
     if (!res.ok) {
-      const text = await res.text().catch(() => '')
+      const text = await readCappedText(res.body, MAX_ERROR_BODY_BYTES).catch(() => '')
       return {
         ok: false,
         error: text.slice(0, 500) || `HTTP ${res.status}`,
@@ -110,9 +108,18 @@ export async function publishToDiscord(sink: SinkDiscordWebhook, args: DiscordPu
       }
     }
 
-    const data = (await res.json().catch(() => ({}))) as { id?: string }
-    return { ok: true, providerMessageId: data.id }
+    const text = await readCappedText(res.body, MAX_ERROR_BODY_BYTES).catch(() => '')
+    let id: string | undefined
+    try {
+      id = (JSON.parse(text) as { id?: string }).id
+    } catch {
+      id = undefined
+    }
+    return { ok: true, providerMessageId: id }
   } catch (err) {
+    if (err instanceof SsrfBlockedError) {
+      return { ok: false, error: err.message, code: 'ssrf-blocked' }
+    }
     // Don't stringify the error object — could contain the webhook URL.
     const message = err instanceof Error ? err.message : 'fetch failed'
     return { ok: false, error: message, code: 'discord-network' }

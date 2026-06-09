@@ -9,7 +9,46 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  quality:
+    # Gate the deploy: typecheck + build must pass before anything is pushed
+    # to GHCR (watchtower auto-deploys :latest, so an unverified push would
+    # ship straight to prod). Mirrors the `web` job in ci.yml.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build (Next + worker)
+        env:
+          # Build-time env stubs so env.ts validation passes during esbuild's
+          # worker bundling. These never reach runtime images.
+          SESSION_SECRET: '0000000000000000000000000000000000000000000000000000000000000000'
+          APP_ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
+          DATABASE_URL: 'postgresql://stub:stub@localhost:5432/stub'
+          PUBLIC_BASE_URL: 'http://localhost:3000'
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: pnpm build
+
   build-and-push:
+    needs: quality
     runs-on: ubuntu-latest
     permissions:
       contents: write   # to push the version tag

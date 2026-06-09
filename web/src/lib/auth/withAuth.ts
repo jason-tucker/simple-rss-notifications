@@ -24,7 +24,9 @@ import { rateLimit, clientIp } from '@/lib/ratelimit'
  *   5. Apply per-user rate limit (default 120/min) and per-IP ceiling.
  *   6. If requireElevated, verify session.elevatedUntil > now (PR4 feature
  *      — until then no route sets requireElevated=true).
- *   7. Call the handler with `(req, { session, ip })`.
+ *   7. Call the handler with `(req, { session, ip }, route)`, forwarding
+ *      Next's route context so dynamic segments (`[id]`, `[type]`, …) are
+ *      readable via `await route.params`.
  *
  * All rejection paths return JSON with a stable `code` so the UI can react.
  */
@@ -40,13 +42,24 @@ export interface WithAuthOptions {
   rateLimitPerIp?: { limit: number; windowMs: number }
 }
 
-type Handler = (req: NextRequest, ctx: AuthContext) => Promise<Response> | Response
+/**
+ * Next 15 invokes route handlers as `(req, { params })` where `params` is a
+ * Promise resolving to the dynamic segments. Static routes (no `[...]`) get
+ * `params` resolving to `{}`. We forward this verbatim to the wrapped handler.
+ */
+export type RouteCtx = { params: Promise<Record<string, string>> }
+
+type Handler = (
+  req: NextRequest,
+  ctx: AuthContext,
+  route: RouteCtx,
+) => Promise<Response> | Response
 
 const DEFAULT_USER_LIMIT = { limit: 120, windowMs: 60_000 }
 const DEFAULT_IP_LIMIT = { limit: 600, windowMs: 60_000 }
 
-export function withAuth(handler: Handler, opts: WithAuthOptions = {}): Handler {
-  return async (req, _ctx) => {
+export function withAuth(handler: Handler, opts: WithAuthOptions = {}) {
+  return async (req: NextRequest, route: RouteCtx): Promise<Response> => {
     const ip = clientIp(req)
 
     // 1+2+3: session presence + DB mirror + password-change invalidation
@@ -108,6 +121,6 @@ export function withAuth(handler: Handler, opts: WithAuthOptions = {}): Handler 
     // Last-seen bookkeeping — best-effort, never blocks the handler.
     void db.execute(sql`UPDATE web_sessions SET last_seen_at = now() WHERE jti = ${session.jti}`).catch(() => {})
 
-    return handler(req, { session, ip })
+    return handler(req, { session, ip }, route)
   }
 }

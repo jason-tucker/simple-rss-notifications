@@ -1,12 +1,9 @@
 import { NextResponse } from 'next/server'
-import type { NextRequest } from 'next/server'
 import { sql } from 'drizzle-orm'
 import { z } from 'zod'
-import { readSessionCookie } from '@/lib/auth/session'
-import { isSameOrigin } from '@/lib/auth/csrf'
+import { withAuth } from '@/lib/auth/withAuth'
 import { withUser } from '@/lib/db/withUser'
 import { writeAudit } from '@/lib/audit'
-import { clientIp } from '@/lib/ratelimit'
 import { notifyFeedsChanged } from '@/lib/db/notify'
 
 export const dynamic = 'force-dynamic'
@@ -16,20 +13,13 @@ const Patch = z.object({
   enabled: z.boolean().optional(),
 })
 
-type Params = { id: string; destId: string }
-
-export async function PATCH(req: NextRequest, ctx: { params: Promise<Params> }) {
-  if (!isSameOrigin(req)) return NextResponse.json({ error: 'forbidden', code: 'csrf' }, { status: 403 })
-  const session = await readSessionCookie()
-  if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-
-  const { id, destId } = await ctx.params
+export const PATCH = withAuth(async (req, { session, ip }, route) => {
+  const { id, destId } = await route.params
   const json = await req.json().catch(() => null)
   const parsed = Patch.safeParse(json)
   if (!parsed.success) {
     return NextResponse.json({ error: 'bad-request', issues: parsed.error.issues }, { status: 400 })
   }
-  const ip = clientIp(req)
 
   return withUser(session.uid, async (tx) => {
     const rows = await tx.execute<{ id: string }>(sql`
@@ -48,15 +38,10 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<Params> }) 
     void notifyFeedsChanged()
     return NextResponse.json({ ok: true })
   })
-}
+})
 
-export async function DELETE(req: NextRequest, ctx: { params: Promise<Params> }) {
-  if (!isSameOrigin(req)) return NextResponse.json({ error: 'forbidden', code: 'csrf' }, { status: 403 })
-  const session = await readSessionCookie()
-  if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-
-  const { id, destId } = await ctx.params
-  const ip = clientIp(req)
+export const DELETE = withAuth(async (_req, { session, ip }, route) => {
+  const { id, destId } = await route.params
 
   return withUser(session.uid, async (tx) => {
     const rows = await tx.execute<{ id: string }>(sql`
@@ -72,4 +57,4 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<Params> })
     void notifyFeedsChanged()
     return NextResponse.json({ ok: true })
   })
-}
+})

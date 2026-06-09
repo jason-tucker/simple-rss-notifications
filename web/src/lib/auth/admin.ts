@@ -19,7 +19,11 @@ import { readSessionCookie, type Session } from './session'
  */
 export type AdminGate =
   | { ok: true; session: Session }
-  | { ok: false; status: 401 | 403; code: 'no-session' | 'user-missing' | 'password-changed' | 'not-admin' }
+  | {
+      ok: false
+      status: 401 | 403
+      code: 'no-session' | 'user-missing' | 'password-changed' | 'session-revoked' | 'not-admin'
+    }
 
 export async function requireAdmin(): Promise<AdminGate> {
   const session = await readSessionCookie()
@@ -33,6 +37,20 @@ export async function requireAdmin(): Promise<AdminGate> {
   if (Math.floor(new Date(row.password_changed_at).getTime() / 1000) > session.iat) {
     return { ok: false, status: 401, code: 'password-changed' }
   }
+
+  // Server-side jti revocation — the JWT is signed and self-validating, but a
+  // logged-out / revoked / expired session still has a deleted or invalidated
+  // web_sessions row. Reject those (mirrors withAuth's session-mirror check) so
+  // a stolen admin JWT can't outlive its session.
+  const sessRows = await db.execute<{ revoked_at: Date | null; expires_at: Date }>(sql`
+    SELECT revoked_at, expires_at FROM web_sessions WHERE jti = ${session.jti} LIMIT 1
+  `)
+  const sessRow = sessRows[0]
+  if (!sessRow) return { ok: false, status: 401, code: 'session-revoked' }
+  if (sessRow.revoked_at || new Date(sessRow.expires_at).getTime() < Date.now()) {
+    return { ok: false, status: 401, code: 'session-revoked' }
+  }
+
   if (!row.is_admin) return { ok: false, status: 403, code: 'not-admin' }
 
   return { ok: true, session }

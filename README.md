@@ -99,7 +99,7 @@ All configuration is environment-driven and validated by a zod schema in `web/sr
 | `PUBLIC_BASE_URL` | **yes** | Public origin (validated as a URL). Single source of truth for cookie domain and CSRF origin check — never hardcoded elsewhere. |
 | `SRN_ROLE` | no (default `web`) | `web` runs the Next.js server; `worker` runs the poller/dispatcher loop. |
 | `BOOTSTRAP_USERNAME` | no (default `tucker`) | First-boot seed user; created only when the `users` table is empty. Set to `skip` to disable. |
-| `BOOTSTRAP_PASSWORD` | no (default `admin`) | Password for the seed user; forced password-change on first login. |
+| `BOOTSTRAP_PASSWORD` | **yes** (no default) | Password for the seed admin user; forced password-change on first login. Must NOT be empty or `admin` — the worker refuses to seed an admin with a weak/known password. `scripts/install.sh` generates a strong one. |
 | `NODE_ENV` | no (default `production`) | `development` / `production` / `test`. |
 
 Deploy-plumbing vars (`WEB_IMAGE`, `CADDY_IMAGE`, `PORT`, `NEXT_HOST`/`NEXT_ALIAS`, `POSTGRES_*`) live in `.env` for the compose stack — see `.env.example`. There are intentionally **no** `WATCHTOWER_*` vars (see Deployment).

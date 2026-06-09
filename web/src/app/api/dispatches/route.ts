@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server'
-import type { NextRequest } from 'next/server'
 import { sql } from 'drizzle-orm'
 import { z } from 'zod'
-import { readSessionCookie } from '@/lib/auth/session'
+import { withAuth } from '@/lib/auth/withAuth'
 import { withUser } from '@/lib/db/withUser'
 
 export const dynamic = 'force-dynamic'
@@ -25,10 +24,7 @@ const Query = z.object({
  *
  * RLS is enforced via withUser — only the caller's own rows are visible.
  */
-export async function GET(req: NextRequest) {
-  const session = await readSessionCookie()
-  if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-
+export const GET = withAuth(async (req, { session }) => {
   const url = new URL(req.url)
   const parsed = Query.safeParse(Object.fromEntries(url.searchParams))
   if (!parsed.success) {
@@ -73,10 +69,11 @@ export async function GET(req: NextRequest) {
     `)
     const total = await tx.execute<{ c: number }>(sql`
       SELECT count(*)::int AS c FROM dispatches d
+      JOIN feed_items fi ON fi.id = d.feed_item_id
       WHERE (${status ?? null}::text IS NULL OR d.status = ${status ?? null}::text)
-        AND (${feed_id ?? null}::uuid IS NULL OR (SELECT user_id FROM feeds WHERE id = (SELECT feed_id FROM feed_items WHERE id = d.feed_item_id)) IS NOT NULL)
+        AND (${feed_id ?? null}::uuid IS NULL OR fi.feed_id = ${feed_id ?? null}::uuid)
         AND (${route_id ?? null}::uuid IS NULL OR d.route_id = ${route_id ?? null}::uuid)
     `)
     return NextResponse.json({ dispatches: rows, total: total[0]?.c ?? 0 })
   })
-}
+})

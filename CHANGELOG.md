@@ -5,6 +5,38 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.15.0] — 2026-06-09 — Security & hardening pass
+
+A consolidated security review (High + Medium findings). Full write-up in
+`security-review/`. No behavioural changes to feeds/routes/sinks beyond the
+auth/SSRF hardening below; existing data is untouched (no destructive migration).
+
+### Security — authentication & sessions
+- **Wire `withAuth()` into every data API route** (`feeds`, `routes`, `routes/*/destinations`, `sinks`, `dispatches`, and the two `test`/`test-with-latest` endpoints). Previously these used bare `readSessionCookie()`, which verified only the JWT signature+exp — so **logout, "logout everywhere", and password changes did not revoke live sessions** on the JSON API, and most routes had **no rate limit** (CLAUDE.md §11). `withAuth` now enforces the `web_sessions` jti revocation check, `password_changed_at > iat` invalidation, CSRF origin check, and per-user/per-IP limits on all of them. `withAuth` was extended to forward Next 15's dynamic route context so `[id]`/`[type]`/`[destId]` params still resolve. *(verified at runtime: a logged-out cookie now returns `401 session-revoked`.)*
+- **Admin routes:** `requireAdmin()` now performs the same `web_sessions` jti revocation check, and an admin password reset now **deletes the target's `web_sessions`** (matching the self-service flow) so a reset immediately ejects a compromised session.
+- **Default credentials:** removed the shippable `BOOTSTRAP_PASSWORD` default (`'admin'`); the worker bootstrap now refuses to seed an admin when the password is unset/empty or `admin`, `scripts/install.sh` generates and prints a strong random password, and `.env.example` carries an empty placeholder.
+
+### Security — SSRF & outbound HTTP
+- **New `safeFetch()` in `lib/ssrf.ts`** replaces raw `fetch()` at every outbound call site (RSS fetch, ntfy, Discord). It resolves the host once and **pins the TCP connection to the validated IP** (connect == check, defeating DNS-rebinding/TOCTOU), preserves the Host header + TLS SNI, **follows redirects manually and re-validates every `Location`** (defeating redirect-based SSRF), enforces an end-to-end timeout, and decodes gzip/deflate/br.
+- **Byte-level IPv6 classification** now blocks IPv4-mapped (all textual forms incl. `::ffff:7f00:1`), NAT64 `64:ff9b::/96`, 6to4 `2002::/16`, IPv4-compatible, ULA, link-local, and multicast — closing prior allowlist gaps.
+- **SMTP sink** is now SSRF-guarded (`isPrivateHost()` before connecting) and connection-level errors collapse to a generic message, **killing the internal port-scan oracle**.
+- ntfy `Click` header is sanitized + http(s)-gated; provider error bodies are read with an 8 KiB cap.
+
+### Security — frontend
+- **Stored-XSS fix:** feed-controlled `item_link` is gated through an `isSafeHttpUrl` allowlist (shared `lib/url.ts`, control-char stripped) at **both ingest (`rss/parse.ts`) and render (`ActivityList.tsx`)**, so a `javascript:`-scheme feed link can no longer become a clickable `href`.
+- **Content-Security-Policy** added in `next.config.mjs` (`default-src 'self'`, `object-src 'none'`, `frame-ancestors 'none'`, `base-uri 'self'`, …) as an injection backstop. *(Interim `'unsafe-inline'` on script/style pending a nonce pipeline — see follow-ups.)*
+
+### Added
+- **Unit tests** (`node:test` via `pnpm test`) for the SSRF IP-classifier and the URL allowlist; wired into CI.
+- **CI/CD security gates:** the deploy workflow now `needs:` a typecheck+build `quality` job (nothing reaches GHCR/watchtower unverified); CI gains `pnpm audit`, gitleaks, and CodeQL jobs (pinned to SHAs) plus `.github/dependabot.yml`.
+- **Container hardening:** `mem_limit`/`cpus`, `security_opt: no-new-privileges`, `cap_drop: ALL` (web/worker/caddy), healthchecks, and patch-pinned base images in `docker-compose.yml`/Dockerfiles.
+
+### Changed — dependencies
+- `nodemailer` `^6.9.16 → ^8.0.5` (clears the HIGH addressparser-DoS advisory), `@types/nodemailer` `→ ^8`, `esbuild → ^0.25`, `drizzle-kit → ^0.31`, `next → ^15.5`, `postcss → ^8.5.10` (+`pnpm.overrides`). `pnpm audit` 9 → 1.
+
+### Fixed
+- `dispatches` list `total` count now honours the `feed_id` filter (pagination total was over-counting).
+
 ## [0.14.0] — 2026-06-09
 
 ### Added
