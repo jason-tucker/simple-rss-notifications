@@ -27,6 +27,9 @@ Thumbs.db
 .idea/
 *.swp
 
+# Claude Code agent worktrees / scratch
+.claude/
+
 # Drizzle generated
 web/drizzle/
 
