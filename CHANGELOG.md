@@ -5,6 +5,16 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.14.0] — 2026-06-09
+
+### Added
+- **Admin role + user management.** The app was effectively single-user (only the bootstrap account); there was no admin concept and no way to add a user. This adds a real `is_admin` flag and a management surface:
+  - **Migration `0011_users_is_admin`** adds `users.is_admin` (default `false`) and promotes the oldest/bootstrap user to admin on upgrade (only if no admin exists yet). Fresh installs get their first admin from the worker bootstrap seeder, which now inserts `is_admin = true`.
+  - **`/api/users`** (`GET` list, `POST` create) and **`/api/users/[id]`** (`PATCH` to grant/revoke admin, reset password, or set must-change-password; `DELETE` to remove). All gated by `requireAdmin()` (`lib/auth/admin.ts`), CSRF-checked on writes (`isSameOrigin`), and rate-limited per admin.
+  - **`/dashboard/admin/users`** page (admin-only; non-admins are redirected) with a create form and per-user actions. A "manage users →" link appears on the dashboard for admins only.
+  - **Safety rails:** an admin can't delete *or* demote their own account, and can't remove/demote the **last** admin — that check locks the admin rows and re-counts inside a transaction, so concurrent demotes/deletes can't race the system down to zero admins. Password resets bump `password_changed_at` to invalidate the target's existing sessions; created/updated/deleted users are written to the audit log (never the password).
+  - Admin user-management queries run as the DB **owner** (no `withUser`), so they bypass RLS and can see/insert/delete any user row — no new RLS policy was required.
+
 ## [0.13.2] — 2026-06-05
 
 ### Docs
