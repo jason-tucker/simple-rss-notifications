@@ -66,14 +66,16 @@ async function seedUser(log: Logger): Promise<void> {
 
   await db.transaction(async (tx) => {
     await tx.execute(sql`
-      INSERT INTO users (username, password_hash, must_change_password)
-      VALUES (${username}, ${hash}, true)
+      INSERT INTO users (username, password_hash, must_change_password, is_admin)
+      VALUES (${username}, ${hash}, true, true)
       ON CONFLICT (username) DO NOTHING
     `)
     await setMarker(tx as unknown as typeof db, 'bootstrap_completed_at')
   })
 
-  log('bootstrap-user-created', { username, must_change_password: true })
+  // The first/bootstrap user is the admin. Existing single-user installs are
+  // promoted by migration 0011 instead (it back-fills the oldest user).
+  log('bootstrap-user-created', { username, must_change_password: true, is_admin: true })
 }
 
 /**

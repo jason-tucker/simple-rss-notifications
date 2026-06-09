@@ -16,8 +16,8 @@ export default async function HomePage() {
   const session = await readSessionCookie()
   if (!session) redirect('/login')
 
-  const rows = await db.execute<{ must_change_password: boolean; password_changed_at: Date; username: string }>(sql`
-    SELECT must_change_password, password_changed_at, username FROM users WHERE id = ${session.uid}::uuid LIMIT 1
+  const rows = await db.execute<{ must_change_password: boolean; password_changed_at: Date; username: string; is_admin: boolean }>(sql`
+    SELECT must_change_password, password_changed_at, username, is_admin FROM users WHERE id = ${session.uid}::uuid LIMIT 1
   `)
   const user = rows[0]
   if (!user) redirect('/login')
@@ -105,6 +105,12 @@ export default async function HomePage() {
           </>
         )}
       </div>
+
+      {user.is_admin && (
+        <div className="text-xs text-zinc-500">
+          <Link href="/dashboard/admin/users" className="hover:text-zinc-300 underline">manage users →</Link>
+        </div>
+      )}
 
       <p className="text-xs text-zinc-600">v{BUILD_VERSION}</p>
     </div>
