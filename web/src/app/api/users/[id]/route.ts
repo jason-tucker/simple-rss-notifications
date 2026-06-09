@@ -99,6 +99,14 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<Params> }) 
       sets.push(sql`updated_at = now()`)
 
       await tx.execute(sql`UPDATE users SET ${sql.join(sets, sql`, `)} WHERE id = ${id}::uuid`)
+
+      // An admin password reset must force the target fully out: bumping
+      // password_changed_at invalidates JWTs issued before now, but stale
+      // jti rows would otherwise survive. Kill every session for the target
+      // in the same txn (mirrors the self-service change-password route).
+      if (password_hash !== undefined) {
+        await tx.execute(sql`DELETE FROM web_sessions WHERE user_id = ${id}::uuid`)
+      }
     })
   } catch (err) {
     if (err instanceof LastAdminError) {
