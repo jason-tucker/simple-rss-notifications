@@ -1,13 +1,10 @@
 import { NextResponse } from 'next/server'
-import type { NextRequest } from 'next/server'
 import { sql } from 'drizzle-orm'
 import { z } from 'zod'
+import { withAuth } from '@/lib/auth/withAuth'
 import { withUser } from '@/lib/db/withUser'
-import { readSessionCookie } from '@/lib/auth/session'
-import { isSameOrigin } from '@/lib/auth/csrf'
 import { encrypt } from '@/lib/crypto/aead'
 import { writeAudit, redactSecretFields } from '@/lib/audit'
-import { clientIp } from '@/lib/ratelimit'
 import { checkSafeOutboundUrl } from '@/lib/ssrf'
 
 export const dynamic = 'force-dynamic'
@@ -51,10 +48,7 @@ interface ListedSink {
   updated_at: string
 }
 
-export async function GET() {
-  const session = await readSessionCookie()
-  if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-
+export const GET = withAuth(async (_req, { session }) => {
   return withUser(session.uid, async (tx) => {
     const smtp = await tx.execute<{
       id: string; label: string; host: string; port: number; username: string
@@ -137,7 +131,7 @@ export async function GET() {
     ]
     return NextResponse.json({ sinks: out })
   })
-}
+})
 
 const SmtpBody = z.object({
   type: z.literal('smtp'),
@@ -187,17 +181,12 @@ const DiscordWebhookBody = z.object({
 
 const Body = z.discriminatedUnion('type', [SmtpBody, ResendBody, NtfyBody, DiscordWebhookBody])
 
-export async function POST(req: NextRequest) {
-  if (!isSameOrigin(req)) return NextResponse.json({ error: 'forbidden', code: 'csrf' }, { status: 403 })
-  const session = await readSessionCookie()
-  if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-
+export const POST = withAuth(async (req, { session, ip }) => {
   const json = await req.json().catch(() => null)
   const parsed = Body.safeParse(json)
   if (!parsed.success) {
     return NextResponse.json({ error: 'bad-request', issues: parsed.error.issues }, { status: 400 })
   }
-  const ip = clientIp(req)
 
   if (parsed.data.type === 'ntfy') {
     // Catch obvious SSRF up-front (private IPs, cloud metadata). The
@@ -319,4 +308,4 @@ export async function POST(req: NextRequest) {
     })
     return NextResponse.json({ ok: true, id, type: 'discord_webhook' })
   })
-}
+})

@@ -1,12 +1,9 @@
 import { NextResponse } from 'next/server'
-import type { NextRequest } from 'next/server'
 import { sql } from 'drizzle-orm'
 import { z } from 'zod'
-import { readSessionCookie } from '@/lib/auth/session'
-import { isSameOrigin } from '@/lib/auth/csrf'
+import { withAuth } from '@/lib/auth/withAuth'
 import { withUser } from '@/lib/db/withUser'
 import { writeAudit } from '@/lib/audit'
-import { clientIp } from '@/lib/ratelimit'
 import { checkSafeOutboundUrl } from '@/lib/ssrf'
 import { notifyFeedsChanged } from '@/lib/db/notify'
 
@@ -25,10 +22,7 @@ const Body = z.object({
   backfill_pace_seconds: z.number().int().min(0).max(24 * 60 * 60).default(0),
 })
 
-export async function GET() {
-  const session = await readSessionCookie()
-  if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-
+export const GET = withAuth(async (_req, { session }) => {
   return withUser(session.uid, async (tx) => {
     const rows = await tx.execute<{
       id: string; label: string; url: string; enabled: boolean
@@ -47,13 +41,9 @@ export async function GET() {
     `)
     return NextResponse.json({ feeds: rows })
   })
-}
+})
 
-export async function POST(req: NextRequest) {
-  if (!isSameOrigin(req)) return NextResponse.json({ error: 'forbidden', code: 'csrf' }, { status: 403 })
-  const session = await readSessionCookie()
-  if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-
+export const POST = withAuth(async (req, { session, ip }) => {
   const json = await req.json().catch(() => null)
   const parsed = Body.safeParse(json)
   if (!parsed.success) {
@@ -67,7 +57,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: ssrf, code: 'ssrf-blocked' }, { status: 400 })
   }
 
-  const ip = clientIp(req)
   return withUser(session.uid, async (tx) => {
     const rows = await tx.execute<{ id: string }>(sql`
       INSERT INTO feeds (
@@ -93,4 +82,4 @@ export async function POST(req: NextRequest) {
     void notifyFeedsChanged()
     return NextResponse.json({ ok: true, id })
   })
-}
+})
