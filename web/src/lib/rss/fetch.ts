@@ -1,5 +1,5 @@
 import 'server-only'
-import { checkSafeOutboundUrl } from '@/lib/ssrf'
+import { safeFetch, SsrfBlockedError } from '@/lib/ssrf'
 
 /**
  * Conditional GET an RSS feed. Returns one of:
@@ -22,23 +22,24 @@ export type FetchResult =
   | { kind: 'error'; error: string; code: string }
 
 export async function fetchFeed(url: string, opts: { etag?: string | null; lastModified?: string | null } = {}): Promise<FetchResult> {
-  const ssrf = await checkSafeOutboundUrl(url)
-  if (ssrf) return { kind: 'error', error: ssrf, code: 'ssrf-blocked' }
-
   const headers: Record<string, string> = {
     'User-Agent': UA,
+    // Accept-Encoding intentionally omitted: safeFetch uses Node's http(s)
+    // layer which does not transparently decompress, so we let the server
+    // send identity. (Most feeds are small and the 5 MiB cap is on raw bytes.)
     Accept: 'application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5',
-    'Accept-Encoding': 'gzip, deflate',
   }
   if (opts.etag) headers['If-None-Match'] = opts.etag
   if (opts.lastModified) headers['If-Modified-Since'] = opts.lastModified
 
   try {
-    const res = await fetch(url, {
+    // safeFetch resolves once, pins the connection to a validated IP, and
+    // re-validates every redirect target before following — defeating DNS
+    // rebinding and redirect-based SSRF.
+    const res = await safeFetch(url, {
       method: 'GET',
       headers,
-      redirect: 'follow',
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      timeoutMs: FETCH_TIMEOUT_MS,
     })
 
     if (res.status === 304) return { kind: 'not-modified' }
@@ -72,6 +73,9 @@ export async function fetchFeed(url: string, opts: { etag?: string | null; lastM
       lastModified: res.headers.get('last-modified'),
     }
   } catch (err) {
+    if (err instanceof SsrfBlockedError) {
+      return { kind: 'error', error: err.message, code: 'ssrf-blocked' }
+    }
     if (err instanceof Error && err.name === 'TimeoutError') {
       return { kind: 'error', error: 'fetch timed out', code: 'timeout' }
     }
