@@ -1,5 +1,6 @@
 import 'server-only'
 import { createHash } from 'node:crypto'
+import { isSafeHttpUrl } from '@/lib/url'
 
 /**
  * Minimal, dependency-free RSS 2.0 / Atom 1.0 parser. Handles the 95%
@@ -71,8 +72,20 @@ function extractTag(block: string, names: string[]): string | null {
  * Atom links are self-closing with rel/type attrs:  <link rel="alternate" href="..."/>
  * RSS 2.0 links are plain text: <link>https://...</link>
  * Try alternate-relation Atom first, then any other Atom link, then RSS plain.
+ *
+ * Defense-in-depth: feed content is attacker-controlled, so we drop any link
+ * that isn't http(s) before it's ever stored. This stops `javascript:`,
+ * `data:`, etc. from reaching the DB and the activity UI's "Source" anchor
+ * (which would otherwise be a stored-XSS sink, since React does not strip
+ * dangerous href schemes). The UI gates on the same allowlist as a backstop.
  */
 function extractLink(block: string): string | null {
+  const raw = extractLinkRaw(block)
+  if (raw && isSafeHttpUrl(raw)) return raw
+  return null
+}
+
+function extractLinkRaw(block: string): string | null {
   const atomAlternate = /<link\b[^>]*\brel=["']?alternate["']?[^>]*\bhref=["']([^"']+)["'][^>]*\/?>/i.exec(block)
   if (atomAlternate) return atomAlternate[1] ?? null
   const atomAny = /<link\b[^>]*\bhref=["']([^"']+)["'][^>]*\/?>/i.exec(block)

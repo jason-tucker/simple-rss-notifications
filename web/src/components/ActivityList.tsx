@@ -2,6 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
+import { isSafeHttpUrl } from '@/lib/url'
 
 export interface ActivityRow {
   id: string
@@ -117,7 +118,15 @@ function ActivityItem({ row }: { row: ActivityRow }) {
           )}
         </div>
         <div className="flex shrink-0 gap-2 items-center">
-          {row.item_link && (
+          {/*
+            Only render the "Source" anchor when the feed-controlled link is
+            an http(s) URL. RSS feeds are attacker-controlled, and React does
+            NOT strip dangerous href schemes (e.g. `javascript:`), so an
+            unguarded href here is a stored-XSS sink. Unsafe links are dropped
+            (the item title is still shown as plain text above). Ingest in
+            lib/rss/parse.ts also blanks non-http(s) links as defense-in-depth.
+          */}
+          {row.item_link && isSafeHttpUrl(row.item_link) && (
             <a href={row.item_link} target="_blank" rel="noopener noreferrer" className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:bg-zinc-800">
               Source ↗
             </a>
