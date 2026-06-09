@@ -8,7 +8,7 @@
 #   1. Checks Docker + Docker Compose v2.
 #   2. Clones or updates the repo to ~/projects/simple-rss-notifications.
 #   3. Creates .env from .env.example with auto-generated secrets
-#      (POSTGRES_PASSWORD, SESSION_SECRET, APP_ENCRYPTION_KEY).
+#      (POSTGRES_PASSWORD, SESSION_SECRET, APP_ENCRYPTION_KEY, BOOTSTRAP_PASSWORD).
 #   4. Opens .env in nano so you can fill in PUBLIC_BASE_URL.
 #   5. Pulls the latest GHCR image.
 #   6. Starts the stack via `docker compose up -d`.
@@ -133,9 +133,21 @@ if [ ! -f .env ]; then
     sed -i "s|^APP_ENCRYPTION_KEY=.*|APP_ENCRYPTION_KEY=$EK|" .env
     ok "Generated random APP_ENCRYPTION_KEY (64 hex chars)"
 
+    # Auto-generate the first-login admin password. There is NO default — the
+    # worker refuses to seed an admin with an unset/empty or 'admin' password.
+    BOOTSTRAP_PW=$(gen_alnum)
+    sed -i "s|^BOOTSTRAP_PASSWORD=.*|BOOTSTRAP_PASSWORD=$BOOTSTRAP_PW|" .env
+    ok "Generated random BOOTSTRAP_PASSWORD"
+    echo ""
+    warn "FIRST-LOGIN ADMIN CREDENTIALS — shown only once, save them now:"
+    echo "    username: ${BOOTSTRAP_USERNAME:-tucker}"
+    echo "    password: $BOOTSTRAP_PW"
+    echo "    (you'll be forced to change this password on first login)"
+    echo ""
+
     warn "Edit .env now and fill in:"
     echo "    PUBLIC_BASE_URL  — e.g. https://feeds.example.com"
-    echo "    BOOTSTRAP_USERNAME / BOOTSTRAP_PASSWORD  — first-login admin (default tucker/admin)"
+    echo "    BOOTSTRAP_USERNAME  — first-login admin username (default tucker)"
     echo ""
     echo "    File: $PROJECT_DIR/.env"
     echo ""
