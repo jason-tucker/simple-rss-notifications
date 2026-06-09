@@ -1,13 +1,10 @@
 import { NextResponse } from 'next/server'
-import type { NextRequest } from 'next/server'
 import { sql } from 'drizzle-orm'
 import { z } from 'zod'
+import { withAuth } from '@/lib/auth/withAuth'
 import { withUser } from '@/lib/db/withUser'
-import { readSessionCookie } from '@/lib/auth/session'
-import { isSameOrigin } from '@/lib/auth/csrf'
 import { encrypt } from '@/lib/crypto/aead'
 import { writeAudit, redactSecretFields } from '@/lib/audit'
-import { clientIp } from '@/lib/ratelimit'
 import { checkSafeOutboundUrl } from '@/lib/ssrf'
 
 export const dynamic = 'force-dynamic'
@@ -56,19 +53,12 @@ const DiscordPatch = z.object({
   use_embeds: z.boolean().optional(),
 })
 
-type Params = { type: string; id: string }
-
-export async function PATCH(req: NextRequest, ctx: { params: Promise<Params> }) {
-  if (!isSameOrigin(req)) return NextResponse.json({ error: 'forbidden', code: 'csrf' }, { status: 403 })
-  const session = await readSessionCookie()
-  if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-
-  const { type, id } = await ctx.params
+export const PATCH = withAuth(async (req, { session, ip }, route) => {
+  const { type, id } = await route.params
   const typeResult = TypeParam.safeParse(type)
   if (!typeResult.success) return NextResponse.json({ error: 'bad-type' }, { status: 400 })
 
   const json = await req.json().catch(() => null)
-  const ip = clientIp(req)
 
   if (typeResult.data === 'smtp') {
     const parsed = SmtpPatch.safeParse(json)
@@ -194,18 +184,13 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<Params> }) 
     })
     return NextResponse.json({ ok: true })
   })
-}
+})
 
-export async function DELETE(req: NextRequest, ctx: { params: Promise<Params> }) {
-  if (!isSameOrigin(req)) return NextResponse.json({ error: 'forbidden', code: 'csrf' }, { status: 403 })
-  const session = await readSessionCookie()
-  if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-
-  const { type, id } = await ctx.params
+export const DELETE = withAuth(async (_req, { session, ip }, route) => {
+  const { type, id } = await route.params
   const typeResult = TypeParam.safeParse(type)
   if (!typeResult.success) return NextResponse.json({ error: 'bad-type' }, { status: 400 })
 
-  const ip = clientIp(req)
   const table = typeResult.data === 'smtp' ? sql`sinks_smtp`
               : typeResult.data === 'resend' ? sql`sinks_resend`
               : typeResult.data === 'ntfy' ? sql`sinks_ntfy`
@@ -226,4 +211,4 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<Params> })
     })
     return NextResponse.json({ ok: true })
   })
-}
+})

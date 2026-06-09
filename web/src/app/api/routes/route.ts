@@ -1,12 +1,9 @@
 import { NextResponse } from 'next/server'
-import type { NextRequest } from 'next/server'
 import { sql } from 'drizzle-orm'
 import { z } from 'zod'
-import { readSessionCookie } from '@/lib/auth/session'
-import { isSameOrigin } from '@/lib/auth/csrf'
+import { withAuth } from '@/lib/auth/withAuth'
 import { withUser } from '@/lib/db/withUser'
 import { writeAudit } from '@/lib/audit'
-import { clientIp } from '@/lib/ratelimit'
 import { notifyFeedsChanged } from '@/lib/db/notify'
 
 export const dynamic = 'force-dynamic'
@@ -39,10 +36,7 @@ const CreateBody = z.object({
  *                destinations: [{id, sink_type, sink_id, destination, enabled,
  *                                sink_label}] }]}
  */
-export async function GET() {
-  const session = await readSessionCookie()
-  if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-
+export const GET = withAuth(async (_req, { session }) => {
   return withUser(session.uid, async (tx) => {
     const rows = await tx.execute<{
       id: string; feed_id: string; label: string | null; enabled: boolean
@@ -83,19 +77,14 @@ export async function GET() {
       routes: rows.map((r) => ({ ...r, destinations: byRoute.get(r.id) ?? [] })),
     })
   })
-}
+})
 
-export async function POST(req: NextRequest) {
-  if (!isSameOrigin(req)) return NextResponse.json({ error: 'forbidden', code: 'csrf' }, { status: 403 })
-  const session = await readSessionCookie()
-  if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-
+export const POST = withAuth(async (req, { session, ip }) => {
   const json = await req.json().catch(() => null)
   const parsed = CreateBody.safeParse(json)
   if (!parsed.success) {
     return NextResponse.json({ error: 'bad-request', issues: parsed.error.issues }, { status: 400 })
   }
-  const ip = clientIp(req)
 
   return withUser(session.uid, async (tx) => {
     // RLS scopes these checks to the current user.
@@ -145,4 +134,4 @@ export async function POST(req: NextRequest) {
     void notifyFeedsChanged()
     return NextResponse.json({ ok: true, id: routeId })
   })
-}
+})

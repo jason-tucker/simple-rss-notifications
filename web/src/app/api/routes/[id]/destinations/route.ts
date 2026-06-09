@@ -1,12 +1,9 @@
 import { NextResponse } from 'next/server'
-import type { NextRequest } from 'next/server'
 import { sql } from 'drizzle-orm'
 import { z } from 'zod'
-import { readSessionCookie } from '@/lib/auth/session'
-import { isSameOrigin } from '@/lib/auth/csrf'
+import { withAuth } from '@/lib/auth/withAuth'
 import { withUser } from '@/lib/db/withUser'
 import { writeAudit } from '@/lib/audit'
-import { clientIp } from '@/lib/ratelimit'
 import { notifyFeedsChanged } from '@/lib/db/notify'
 
 export const dynamic = 'force-dynamic'
@@ -24,21 +21,14 @@ const AddBody = z.object({
   { message: 'destination email required for SMTP and Resend sinks', path: ['destination'] },
 )
 
-type Params = { id: string }
-
 /** Add a new destination to an existing route. */
-export async function POST(req: NextRequest, ctx: { params: Promise<Params> }) {
-  if (!isSameOrigin(req)) return NextResponse.json({ error: 'forbidden', code: 'csrf' }, { status: 403 })
-  const session = await readSessionCookie()
-  if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-
-  const { id } = await ctx.params
+export const POST = withAuth(async (req, { session, ip }, route) => {
+  const { id } = await route.params
   const json = await req.json().catch(() => null)
   const parsed = AddBody.safeParse(json)
   if (!parsed.success) {
     return NextResponse.json({ error: 'bad-request', issues: parsed.error.issues }, { status: 400 })
   }
-  const ip = clientIp(req)
 
   return withUser(session.uid, async (tx) => {
     const routeExists = await tx.execute(sql`SELECT 1 FROM routes WHERE id = ${id}::uuid`)
@@ -67,4 +57,4 @@ export async function POST(req: NextRequest, ctx: { params: Promise<Params> }) {
     void notifyFeedsChanged()
     return NextResponse.json({ ok: true, id: destId })
   })
-}
+})
