@@ -45,6 +45,11 @@
     "overrides": {
       "postcss@<8.5.10": ">=8.5.10",
       "esbuild@<0.25.0": ">=0.25.0"
+    },
+    "auditConfig": {
+      "ignoreGhsas": [
+        "GHSA-gpj5-g38j-94v9"
+      ]
     }
   }
 }

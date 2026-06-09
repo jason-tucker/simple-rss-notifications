@@ -9,7 +9,10 @@
 # ─── deps ────────────────────────────────────────────────────────────
 FROM node:22.13.1-alpine AS deps
 WORKDIR /app
-RUN corepack enable
+# Upgrade corepack first: the corepack bundled with this pinned Node patch ships
+# stale package-manager signing keys, so `corepack enable` + pnpm fetch fails with
+# "Cannot find matching keyid". `corepack@latest` carries current keys.
+RUN npm install -g corepack@latest && corepack enable
 COPY package.json pnpm-lock.yaml* ./
 RUN if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; \
     else pnpm install --no-frozen-lockfile; fi
@@ -17,7 +20,10 @@ RUN if [ -f pnpm-lock.yaml ]; then pnpm install --frozen-lockfile; \
 # ─── builder ─────────────────────────────────────────────────────────
 FROM node:22.13.1-alpine AS builder
 WORKDIR /app
-RUN corepack enable
+# Upgrade corepack first: the corepack bundled with this pinned Node patch ships
+# stale package-manager signing keys, so `corepack enable` + pnpm fetch fails with
+# "Cannot find matching keyid". `corepack@latest` carries current keys.
+RUN npm install -g corepack@latest && corepack enable
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ARG GIT_SHA=dev

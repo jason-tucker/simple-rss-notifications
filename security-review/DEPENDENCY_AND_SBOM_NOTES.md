@@ -18,6 +18,7 @@ Before: **2 high / 6 moderate / 1 low**. After: **1 high** (deferred, see below)
 
 ### Residual (deferred)
 - **`drizzle-orm < 0.45.2` — HIGH SQL-identifier injection (`GHSA-gpj5-g38j-94v9`).** A 9-minor pre-1.0 bump (0.36→0.45) with real ORM-regression risk. Practical exploitability here is **low**: the codebase uses parameterized `` sql`...${value}...` `` value-binding everywhere and does **not** use the vulnerable dynamic-identifier/`sql.identifier` surface. Recommend a dedicated, regression-tested PR.
+  - Because the new CI `audit` gate (`pnpm audit --prod --audit-level high`) would otherwise fail on this single tracked advisory, it is listed in `web/package.json` → `pnpm.auditConfig.ignoreGhsas`. The gate **still fails on any other high**; remove the entry once drizzle-orm is bumped.
 
 ## Supply-chain hygiene
 - **No committed secrets** in working tree or git history (ripgrep + git pickaxe over 50 commits; only `.env.example` placeholders). `.gitignore`/`.dockerignore` correctly exclude `.env`.
