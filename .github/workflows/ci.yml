@@ -41,6 +41,9 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Unit tests
+        run: pnpm test
+
       - name: Build (Next + worker)
         env:
           # Build-time env stubs so env.ts validation passes during esbuild's

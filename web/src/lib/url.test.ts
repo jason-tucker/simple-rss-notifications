@@ -1,9 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isSafeUrl, isSafeHttpUrl } from './url.ts'
+import { isSafeUrl, isSafeHttpUrl } from './url'
 
-// Run with Node's native TS type-stripping (no tsx / bundler needed):
-//   node --experimental-strip-types --test src/lib/url.test.ts
+// Run with the tsx loader (resolves extensionless TS imports + path aliases):
+//   node --import tsx --test src/lib/url.test.ts
 // (On Node >= 23.6 type-stripping is on by default; the flag is harmless.)
 
 test('isSafeHttpUrl rejects dangerous schemes', () => {

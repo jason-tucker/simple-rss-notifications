@@ -1,5 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+// Run via: pnpm test  (node --conditions=react-server --import tsx --test).
+// The react-server condition stubs the `server-only` import in ssrf.ts so the
+// pure IP-classification logic can be exercised outside a Next request.
 import { isPrivateAddress, isPrivateHost } from '@/lib/ssrf'
 
 /**

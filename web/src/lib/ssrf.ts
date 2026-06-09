@@ -441,7 +441,6 @@ async function singleRequest(
       return
     }
     if (all) {
-      // @ts-expect-error node's overloaded LookupFunction allows the array form
       callback(null, usable.map((p) => ({ address: p.address, family: p.family })))
     } else {
       const first = usable[0]!
