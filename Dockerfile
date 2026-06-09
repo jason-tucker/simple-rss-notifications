@@ -1,6 +1,9 @@
 # Outer ingress image: Caddy + a minimal fallback landing page.
 # The Next.js app is a separate image built from web/Dockerfile.
-FROM caddy:2.10-alpine
+# Base image pinned to a specific patch tag (not floating `2.10-alpine`) so a
+# rebuild can't silently swap the base out. Bump deliberately. Follow-up: pin
+# by `@sha256:` digest + verify with cosign once a digest can be resolved in CI.
+FROM caddy:2.10.0-alpine
 
 # Bake the fallback landing page and Caddyfile into the image so a single
 # `docker compose pull` is enough to deploy a new build.
