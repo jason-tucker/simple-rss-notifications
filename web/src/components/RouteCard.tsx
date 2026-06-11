@@ -1,8 +1,9 @@
 'use client'
 
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
+import { Badge, Button, ButtonLink, Card } from '@/components/ui'
+import { sinkTypeBadge } from '@/lib/format'
 
 export interface RouteCardData {
   id: string
@@ -45,25 +46,23 @@ export function RouteCard({ route }: { route: RouteCardData }) {
   }
 
   return (
-    <li className="rounded border border-zinc-800 bg-zinc-900 p-3 space-y-2">
+    <Card className="space-y-3 p-4">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="truncate font-medium">{route.label ?? route.feed_label}</span>
-            {!route.enabled && <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-400">disabled</span>}
-            <span className="text-xs text-zinc-500">from <span className="text-zinc-300">{route.feed_label}</span></span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="truncate font-medium text-zinc-100">{route.label ?? route.feed_label}</span>
+            {!route.enabled && <Badge>paused</Badge>}
           </div>
+          <p className="mt-0.5 text-xs text-zinc-500">
+            watches <span className="text-zinc-300">{route.feed_label}</span>
+          </p>
         </div>
         <div className="flex shrink-0 gap-2">
-          <Link href={`/dashboard/routes/${route.id}`} className="rounded border border-zinc-700 px-2 py-1 text-xs hover:bg-zinc-800">
-            Edit
-          </Link>
-          <button onClick={toggleRoute} disabled={busy} className="rounded border border-zinc-700 px-2 py-1 text-xs hover:bg-zinc-800 disabled:opacity-40">
-            {route.enabled ? 'Disable' : 'Enable'}
-          </button>
-          <button onClick={remove} className="rounded border border-red-900 px-2 py-1 text-xs text-red-300 hover:bg-red-950">
-            Delete
-          </button>
+          <ButtonLink size="sm" href={`/dashboard/routes/${route.id}`}>Edit</ButtonLink>
+          <Button size="sm" onClick={toggleRoute} disabled={busy}>
+            {route.enabled ? 'Pause' : 'Resume'}
+          </Button>
+          <Button size="sm" variant="danger" onClick={remove}>Delete</Button>
         </div>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -71,13 +70,18 @@ export function RouteCard({ route }: { route: RouteCardData }) {
           <span className="text-xs text-amber-400">no destinations — items won&apos;t be sent anywhere</span>
         )}
         {route.destinations.map((d) => (
-          <span key={d.id} className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-xs ${d.enabled ? 'border-zinc-700 bg-zinc-950 text-zinc-300' : 'border-zinc-800 bg-zinc-950 text-zinc-600 line-through'}`}>
-            <span className="uppercase text-zinc-500">{d.sink_type.replace('_webhook', '')}</span>
+          <span
+            key={d.id}
+            className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs ${
+              d.enabled ? 'border-zinc-700 bg-zinc-950 text-zinc-300' : 'border-zinc-800 bg-zinc-950 text-zinc-600 line-through'
+            }`}
+          >
+            <span className="text-zinc-500">{sinkTypeBadge(d.sink_type)}</span>
             <span>{d.sink_label ?? '(deleted sink)'}</span>
             {d.destination && <span className="text-zinc-500">→ {d.destination}</span>}
           </span>
         ))}
       </div>
-    </li>
+    </Card>
   )
 }

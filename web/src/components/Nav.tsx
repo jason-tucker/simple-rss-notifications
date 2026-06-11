@@ -12,7 +12,7 @@ const LINKS: Array<{ href: string; label: string; exact?: boolean }> = [
   { href: '/dashboard/activity', label: 'Activity' },
 ]
 
-const ADMIN_LINK = { href: '/dashboard/admin/users', label: 'Users' }
+const ADMIN_LINK: (typeof LINKS)[number] = { href: '/dashboard/admin/users', label: 'Users' }
 
 export function Nav({ isAdmin }: { isAdmin: boolean }) {
   const pathname = usePathname()

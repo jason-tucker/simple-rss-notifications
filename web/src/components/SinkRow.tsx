@@ -1,8 +1,9 @@
 'use client'
 
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
+import { Badge, Button, ButtonLink, Card, Field, Input } from '@/components/ui'
+import { sinkTypeBadge } from '@/lib/format'
 
 export interface SinkSummary {
   type: 'smtp' | 'resend' | 'ntfy' | 'discord_webhook'
@@ -71,15 +72,15 @@ export function SinkRow({ sink }: { sink: SinkSummary }) {
   }
 
   return (
-    <li className="rounded border border-zinc-800 bg-zinc-900">
-      <div className="flex items-center justify-between gap-4 p-3">
+    <Card>
+      <div className="flex items-center justify-between gap-4 p-4">
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs uppercase text-zinc-400">{sink.type}</span>
-            <span className="truncate font-medium">{sink.label}</span>
-            {sink.incomplete && <span className="rounded bg-amber-900 px-1.5 py-0.5 text-xs text-amber-200">incomplete</span>}
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge>{sinkTypeBadge(sink.type)}</Badge>
+            <span className="truncate font-medium text-zinc-100">{sink.label}</span>
+            {sink.incomplete && <Badge tone="warn">incomplete</Badge>}
           </div>
-          <div className="mt-1 text-xs text-zinc-500 truncate">
+          <div className="mt-1 truncate text-xs text-zinc-500">
             {sink.type === 'smtp' && <>{sink.host}:{sink.port} · {sink.username} · from {sink.from_email}{sink.use_tls === false && ' · no TLS'}</>}
             {sink.type === 'resend' && <>Resend · from {sink.from_email}</>}
             {sink.type === 'ntfy' && (
@@ -100,31 +101,23 @@ export function SinkRow({ sink }: { sink: SinkSummary }) {
           </div>
         </div>
         <div className="flex shrink-0 gap-2">
-          <button onClick={() => setTestOpen((v) => !v)} className="rounded border border-zinc-700 px-2 py-1 text-xs hover:bg-zinc-800">
-            {testOpen ? 'Cancel' : 'Test'}
-          </button>
-          <Link href={`/dashboard/sinks/${sink.type}/${sink.id}`} className="rounded border border-zinc-700 px-2 py-1 text-xs hover:bg-zinc-800">
-            Edit
-          </Link>
-          <button onClick={remove} className="rounded border border-red-900 px-2 py-1 text-xs text-red-300 hover:bg-red-950">
-            Delete
-          </button>
+          <Button size="sm" onClick={() => setTestOpen((v) => !v)}>{testOpen ? 'Cancel' : 'Test'}</Button>
+          <ButtonLink size="sm" href={`/dashboard/sinks/${sink.type}/${sink.id}`}>Edit</ButtonLink>
+          <Button size="sm" variant="danger" onClick={remove}>Delete</Button>
         </div>
       </div>
       {testOpen && (
-        <div className="border-t border-zinc-800 px-3 py-3 space-y-2">
+        <div className="space-y-2 border-t border-zinc-800 px-4 py-3">
           {!noDestination && (
-            <label className="block text-xs">
-              <span className="text-zinc-400">Send a test email to:</span>
-              <input
+            <Field label="Send a test email to">
+              <Input
                 type="email"
                 required
                 placeholder="you@example.com"
                 value={testTo}
                 onChange={(e) => setTestTo(e.target.value)}
-                className="mt-1 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100 outline-none focus:border-zinc-500"
               />
-            </label>
+            </Field>
           )}
           {isNtfy && (
             <p className="text-xs text-zinc-500">
@@ -138,18 +131,19 @@ export function SinkRow({ sink }: { sink: SinkSummary }) {
             </p>
           )}
           <div className="flex items-center gap-2">
-            <button
+            <Button
+              size="sm"
+              variant="primary"
               onClick={sendTest}
               disabled={testBusy || (!noDestination && !testTo) || sink.incomplete}
-              className="rounded bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-900 hover:bg-white disabled:opacity-40"
             >
               {testBusy ? 'Sending…' : isNtfy ? 'Send test push' : isDiscord ? 'Send test message' : 'Send test email'}
-            </button>
+            </Button>
             {sink.incomplete && <span className="text-xs text-amber-400">complete the sink first</span>}
             {testMsg && <span className={`text-xs ${testMsg.ok ? 'text-emerald-300' : 'text-red-400'}`}>{testMsg.text}</span>}
           </div>
         </div>
       )}
-    </li>
+    </Card>
   )
 }

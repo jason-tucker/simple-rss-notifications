@@ -2,6 +2,8 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Button, Card, Field, Input, Select } from '@/components/ui'
+import { sinkTypeBadge } from '@/lib/format'
 
 interface FeedOption {
   id: string
@@ -90,80 +92,70 @@ export function RouteForm({ feeds, sinks }: NewProps) {
     }
   }
 
-  const inputCls = 'mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none focus:border-zinc-500'
-
   return (
     <form onSubmit={submit} className="space-y-4">
-      <label className="block">
-        <span className="text-sm text-zinc-400">Source feed</span>
-        <select required value={feedId} onChange={(e) => setFeedId(e.target.value)} className={inputCls}>
+      <Field label="Watch this feed">
+        <Select required value={feedId} onChange={(e) => setFeedId(e.target.value)}>
           {feeds.map((f) => (
             <option key={f.id} value={f.id} disabled={!f.enabled}>
-              {f.label}{!f.enabled ? ' (disabled)' : ''}
+              {f.label}{!f.enabled ? ' (paused)' : ''}
             </option>
           ))}
-        </select>
-      </label>
+        </Select>
+      </Field>
 
-      <label className="block">
-        <span className="text-sm text-zinc-400">Label <span className="text-zinc-600">(optional)</span></span>
-        <input maxLength={100} value={label} onChange={(e) => setLabel(e.target.value)} className={inputCls} placeholder="e.g. UniFi → home everywhere" />
-      </label>
+      <Field label="Name" optional hint="Defaults to the feed's name if left blank.">
+        <Input maxLength={100} value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. UniFi → home everywhere" />
+      </Field>
 
-      <fieldset className="rounded border border-zinc-800 p-3 space-y-3">
-        <legend className="px-2 text-xs uppercase tracking-wide text-zinc-500">Destinations</legend>
+      <Card className="space-y-3 p-4">
+        <p className="text-sm font-medium text-zinc-300">Send new items to</p>
         {destinations.map((d) => {
           const [type] = d.sinkKey.split(':')
           const needsEmail = isEmailType(type)
           return (
-            <div key={d.key} className="space-y-2 rounded border border-zinc-800 p-2">
+            <div key={d.key} className="space-y-2 rounded-md border border-zinc-800 p-3">
               <div className="flex gap-2">
-                <select
+                <Select
                   value={d.sinkKey}
                   onChange={(e) => setDestinations((arr) => arr.map((x) => x.key === d.key ? { ...x, sinkKey: e.target.value } : x))}
-                  className={inputCls}
                 >
                   {sinks.map((s) => (
                     <option key={`${s.type}:${s.id}`} value={`${s.type}:${s.id}`} disabled={s.incomplete}>
-                      [{s.type.replace('_webhook', '').toUpperCase()}] {s.label}{s.incomplete ? ' (incomplete)' : ''}
+                      [{sinkTypeBadge(s.type)}] {s.label}{s.incomplete ? ' (incomplete)' : ''}
                     </option>
                   ))}
-                </select>
+                </Select>
                 {destinations.length > 1 && (
-                  <button type="button" onClick={() => removeDestination(d.key)} className="rounded border border-red-900 px-2 text-xs text-red-300 hover:bg-red-950">
+                  <Button size="sm" variant="danger" onClick={() => removeDestination(d.key)}>
                     Remove
-                  </button>
+                  </Button>
                 )}
               </div>
               {needsEmail ? (
-                <input
+                <Input
                   required
                   type="email"
                   value={d.destination}
                   onChange={(e) => setDestinations((arr) => arr.map((x) => x.key === d.key ? { ...x, destination: e.target.value } : x))}
-                  className={inputCls}
-                  placeholder="destination email — e.g. tucker@itsupportri.com"
+                  placeholder="recipient email — e.g. you@example.com"
                 />
               ) : (
-                <p className="text-xs text-zinc-500 px-1">
-                  Delivers to the sink&apos;s configured target ({type === 'ntfy' ? 'topic' : 'webhook'}). No per-route address needed.
+                <p className="px-1 text-xs text-zinc-500">
+                  Delivers to the sink&apos;s configured target ({type === 'ntfy' ? 'topic' : 'webhook'}). Nothing else to fill in.
                 </p>
               )}
             </div>
           )
         })}
-        <button type="button" onClick={addDestination} className="rounded border border-zinc-700 px-3 py-1.5 text-xs hover:bg-zinc-800">
-          + Add destination
-        </button>
-      </fieldset>
+        <Button size="sm" onClick={addDestination}>+ Add another destination</Button>
+      </Card>
 
       {error && <p className="text-sm text-red-400">{error}</p>}
 
-      <div className="flex gap-2 pt-2">
-        <button type="submit" disabled={busy} className="rounded bg-zinc-100 px-4 py-2 font-medium text-zinc-900 hover:bg-white disabled:opacity-50">
-          {busy ? 'Saving…' : 'Create route'}
-        </button>
-      </div>
+      <Button type="submit" variant="primary" disabled={busy}>
+        {busy ? 'Saving…' : 'Create route'}
+      </Button>
     </form>
   )
 }
