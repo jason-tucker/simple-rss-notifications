@@ -182,7 +182,9 @@ function DestinationRow({ routeId, dest }: { routeId: string; dest: Destination 
 function AddDestination({ routeId, sinks }: { routeId: string; sinks: SinkOption[] }) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
-  const [sinkKey, setSinkKey] = useState(sinks[0] ? `${sinks[0].type}:${sinks[0].id}` : '')
+  // Default to the first usable sink — incomplete ones are disabled options.
+  const defaultSink = sinks.find((s) => !s.incomplete) ?? sinks[0]
+  const [sinkKey, setSinkKey] = useState(defaultSink ? `${defaultSink.type}:${defaultSink.id}` : '')
   const [destination, setDestination] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)

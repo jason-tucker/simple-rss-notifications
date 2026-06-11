@@ -38,16 +38,20 @@ interface NewProps {
 
 export function RouteForm({ feeds, sinks }: NewProps) {
   const router = useRouter()
+  // Default to the first usable sink — incomplete ones are disabled in the
+  // dropdown, so they must not be the initial selection either.
+  const defaultSink = sinks.find((s) => !s.incomplete) ?? sinks[0]
+  const defaultSinkKey = defaultSink ? `${defaultSink.type}:${defaultSink.id}` : ''
   const [feedId, setFeedId] = useState(feeds[0]?.id ?? '')
   const [label, setLabel] = useState('')
   const [destinations, setDestinations] = useState<DestinationDraft[]>([
-    { key: newKey(), sinkKey: sinks[0] ? `${sinks[0].type}:${sinks[0].id}` : '', destination: '' },
+    { key: newKey(), sinkKey: defaultSinkKey, destination: '' },
   ])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   function addDestination() {
-    setDestinations((d) => [...d, { key: newKey(), sinkKey: sinks[0] ? `${sinks[0].type}:${sinks[0].id}` : '', destination: '' }])
+    setDestinations((d) => [...d, { key: newKey(), sinkKey: defaultSinkKey, destination: '' }])
   }
   function removeDestination(key: string) {
     setDestinations((d) => d.length === 1 ? d : d.filter((x) => x.key !== key))
