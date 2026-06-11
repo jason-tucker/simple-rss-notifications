@@ -1,11 +1,13 @@
-import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { sql } from 'drizzle-orm'
 import { readSessionCookie } from '@/lib/auth/session'
 import { withUser } from '@/lib/db/withUser'
 import { RouteCard } from '@/components/RouteCard'
+import { ButtonLink, EmptyState, PageHeader } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
+
+export const metadata = { title: 'Routes' }
 
 export default async function RoutesPage() {
   const session = await readSessionCookie()
@@ -50,26 +52,22 @@ export default async function RoutesPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Routes</h1>
-        <Link href="/dashboard/routes/new" className="rounded border border-zinc-700 px-3 py-1.5 text-sm hover:bg-zinc-800">+ New route</Link>
-      </header>
-      <p className="text-sm text-zinc-400">
-        A route picks one feed and fans new items out to any number of destinations
-        (email · ntfy · Discord). Each destination delivers independently.
-      </p>
+      <PageHeader
+        title="Routes"
+        description="A route watches one feed and fans new items out to any number of destinations. Each destination delivers independently."
+        action={<ButtonLink variant="primary" size="sm" href="/dashboard/routes/new">+ New route</ButtonLink>}
+      />
       {data.length === 0 ? (
-        <div className="rounded border border-zinc-800 bg-zinc-900 p-6 text-sm text-zinc-500">
-          No routes yet. <Link href="/dashboard/routes/new" className="underline hover:text-zinc-300">Add one</Link>.
-        </div>
+        <EmptyState
+          title="No routes yet"
+          hint="A route is what connects a feed to a sink — without one, nothing gets sent."
+          action={<ButtonLink variant="primary" size="sm" href="/dashboard/routes/new">+ New route</ButtonLink>}
+        />
       ) : (
-        <ul className="space-y-3">
+        <div className="space-y-3">
           {data.map((r) => <RouteCard key={r.id} route={r} />)}
-        </ul>
+        </div>
       )}
-      <p className="text-xs text-zinc-600">
-        <Link href="/" className="hover:text-zinc-400">← back to dashboard</Link>
-      </p>
     </div>
   )
 }

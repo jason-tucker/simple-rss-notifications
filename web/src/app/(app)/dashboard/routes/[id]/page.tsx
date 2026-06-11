@@ -1,11 +1,13 @@
 import { redirect, notFound } from 'next/navigation'
-import Link from 'next/link'
 import { sql } from 'drizzle-orm'
 import { readSessionCookie } from '@/lib/auth/session'
 import { withUser } from '@/lib/db/withUser'
 import { EditRouteForm } from '@/components/EditRouteForm'
+import { PageHeader } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
+
+export const metadata = { title: 'Edit route' }
 
 export default async function EditRoutePage({
   params,
@@ -68,13 +70,8 @@ export default async function EditRoutePage({
   if (!data) notFound()
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold">Edit route</h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          <Link href="/dashboard/routes" className="hover:text-zinc-300">← back to routes</Link>
-        </p>
-      </header>
+    <div className="mx-auto max-w-2xl space-y-6">
+      <PageHeader title="Edit route" description={data.route.label ?? data.route.feed_label} />
       <EditRouteForm route={data.route} destinations={data.destinations} sinks={data.sinks} />
     </div>
   )

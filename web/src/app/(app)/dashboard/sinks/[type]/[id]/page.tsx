@@ -1,11 +1,14 @@
 import { redirect, notFound } from 'next/navigation'
-import Link from 'next/link'
 import { sql } from 'drizzle-orm'
 import { readSessionCookie } from '@/lib/auth/session'
 import { withUser } from '@/lib/db/withUser'
 import { SinkForm, type SinkInitial } from '@/components/SinkForm'
+import { PageHeader } from '@/components/ui'
+import { SINK_TYPE_LABELS } from '@/lib/format'
 
 export const dynamic = 'force-dynamic'
+
+export const metadata = { title: 'Edit sink' }
 
 export default async function EditSinkPage({
   params,
@@ -69,13 +72,8 @@ export default async function EditSinkPage({
   if (!sink) notFound()
 
   return (
-    <div className="max-w-xl mx-auto space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold">Edit {type.toUpperCase()} sink</h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          <Link href="/dashboard/sinks" className="hover:text-zinc-300">← back to sinks</Link>
-        </p>
-      </header>
+    <div className="mx-auto max-w-xl space-y-6">
+      <PageHeader title={`Edit ${SINK_TYPE_LABELS[type]} sink`} description={sink.label} />
       <SinkForm mode="edit" type={type} initial={sink} />
     </div>
   )

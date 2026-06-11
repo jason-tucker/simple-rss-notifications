@@ -1,7 +1,8 @@
 'use client'
 
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import { Badge, Button, ButtonLink, Card, Dot } from '@/components/ui'
+import { timeAgo } from '@/lib/format'
 
 export interface FeedSummary {
   id: string
@@ -16,15 +17,6 @@ export interface FeedSummary {
   backfill_mode: string
 }
 
-function ago(iso: string | null): string {
-  if (!iso) return 'never'
-  const sec = Math.floor((Date.now() - new Date(iso).getTime()) / 1000)
-  if (sec < 60) return `${sec}s ago`
-  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`
-  if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`
-  return `${Math.floor(sec / 86400)}d ago`
-}
-
 export function FeedRow({ feed }: { feed: FeedSummary }) {
   const router = useRouter()
 
@@ -35,39 +27,36 @@ export function FeedRow({ feed }: { feed: FeedSummary }) {
     else alert('Delete failed')
   }
 
+  const health: 'ok' | 'danger' | 'off' = !feed.enabled ? 'off' : feed.consecutive_failures > 0 ? 'danger' : 'ok'
+
   return (
-    <li className="rounded border border-zinc-800 bg-zinc-900 p-3">
+    <Card className="p-4">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate font-medium">{feed.label}</span>
-            {!feed.enabled && <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-400">disabled</span>}
+          <div className="flex flex-wrap items-center gap-2">
+            <Dot tone={health} />
+            <span className="truncate font-medium text-zinc-100">{feed.label}</span>
+            {!feed.enabled && <Badge>paused</Badge>}
             {feed.backfill_mode !== 'none' && feed.backfill_mode !== 'done' && (
-              <span className="rounded bg-blue-900 px-1.5 py-0.5 text-xs text-blue-200">backfill pending</span>
+              <Badge tone="info">backfill pending</Badge>
             )}
             {feed.consecutive_failures > 0 && (
-              <span className="rounded bg-red-900 px-1.5 py-0.5 text-xs text-red-200">{feed.consecutive_failures} failures</span>
+              <Badge tone="danger">{feed.consecutive_failures} failed poll{feed.consecutive_failures === 1 ? '' : 's'}</Badge>
             )}
           </div>
           <div className="mt-1 truncate text-xs text-zinc-500">{feed.url}</div>
           <div className="mt-1 text-xs text-zinc-500">
-            polls every {Math.round(feed.poll_interval_s / 60)} min
-            {' · '}last polled {ago(feed.last_polled_at)}
-            {feed.last_success_at && ` · last ok ${ago(feed.last_success_at)}`}
+            checks every {Math.round(feed.poll_interval_s / 60)} min
+            {' · '}last checked {timeAgo(feed.last_polled_at)}
+            {feed.last_success_at && ` · last ok ${timeAgo(feed.last_success_at)}`}
           </div>
-          {feed.last_error && (
-            <div className="mt-1 text-xs text-red-400">last error: {feed.last_error}</div>
-          )}
+          {feed.last_error && <div className="mt-1 break-words text-xs text-red-400">last error: {feed.last_error}</div>}
         </div>
         <div className="flex shrink-0 gap-2">
-          <Link href={`/dashboard/feeds/${feed.id}`} className="rounded border border-zinc-700 px-2 py-1 text-xs hover:bg-zinc-800">
-            Edit
-          </Link>
-          <button onClick={remove} className="rounded border border-red-900 px-2 py-1 text-xs text-red-300 hover:bg-red-950">
-            Delete
-          </button>
+          <ButtonLink size="sm" href={`/dashboard/feeds/${feed.id}`}>Edit</ButtonLink>
+          <Button size="sm" variant="danger" onClick={remove}>Delete</Button>
         </div>
       </div>
-    </li>
+    </Card>
   )
 }

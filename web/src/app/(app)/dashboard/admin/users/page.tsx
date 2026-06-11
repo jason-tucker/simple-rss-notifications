@@ -1,9 +1,9 @@
-import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { sql } from 'drizzle-orm'
 import { db } from '@/lib/db/client'
 import { readSessionCookie } from '@/lib/auth/session'
 import { AdminUsers, type AdminUser } from '@/components/AdminUsers'
+import { PageHeader } from '@/components/ui'
 
 // Reads cookies + DB → never static.
 export const dynamic = 'force-dynamic'
@@ -15,7 +15,8 @@ export default async function AdminUsersPage() {
   if (!session) redirect('/login')
 
   // Owner-level lookup (no withUser) — needs to read this user's flags and,
-  // below, every user row. Mirrors HomePage's session sanity checks.
+  // below, every user row. The admin gate stays here (not in the layout)
+  // because layouts persist across client navigation.
   const me = await db.execute<{ is_admin: boolean; must_change_password: boolean; password_changed_at: Date }>(sql`
     SELECT is_admin, must_change_password, password_changed_at FROM users WHERE id = ${session.uid}::uuid LIMIT 1
   `)
@@ -47,12 +48,10 @@ export default async function AdminUsersPage() {
 
   return (
     <div className="space-y-6">
-      <header className="space-y-1">
-        <Link href="/" className="text-xs text-zinc-500 hover:text-zinc-300">← back to dashboard</Link>
-        <h1 className="text-xl text-zinc-100">User management</h1>
-        <p className="text-sm text-zinc-400">Create accounts, grant or revoke admin, reset passwords, or remove users.</p>
-      </header>
-
+      <PageHeader
+        title="Users"
+        description="Create accounts, grant or revoke admin, reset passwords, or remove users."
+      />
       <AdminUsers currentUserId={session.uid} initialUsers={users} />
     </div>
   )

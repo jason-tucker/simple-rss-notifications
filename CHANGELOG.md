@@ -5,6 +5,44 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.16.0] — 2026-06-11 — UI rebuilt from scratch
+
+A ground-up redesign of every page, focused on "super simple but easy to use".
+Presentation-only: all API routes, payloads, URLs, auth, and worker behaviour
+are unchanged.
+
+### Added
+- **Persistent app shell** — every signed-in page now shares a header with the
+  brand, a nav bar (Overview · Feeds · Routes · Sinks · Activity · Users for
+  admins) with active-page highlighting, the signed-in username, and Log out.
+  Implemented as a Next.js `(app)` route group + layout, so all URLs stay the same.
+- **Shared UI kit** (`components/ui.tsx`): Button/ButtonLink, Input, Select,
+  Field, CheckboxRow, Card, Badge, Dot, PageHeader, EmptyState, Callout — one
+  consistent look everywhere, ~all bespoke Tailwind class soup removed from pages.
+- **Getting-started checklist** on Overview (add a sink → add a feed → create a
+  route) with done/pending states; disappears once setup is complete.
+- **Sink type picker** — a single "+ Add sink" button opens a 4-tile chooser
+  (SMTP / Resend / ntfy / Discord) instead of four separate header buttons.
+  `?type=` deep links still work.
+- Feed list rows show a green/red/gray **health dot** (ok / failing / paused).
+- Helpful empty states with a primary call-to-action on every list page.
+
+### Changed
+- Plainer language throughout: "paused" instead of "disabled", "checks every
+  N min", "recipient email", "Watch this feed", per-page one-line descriptions.
+- Login and forced-password-change pages re-laid-out as centered cards.
+- Activity filter chips now preserve the feed filter when switching status.
+- `timeAgo` and sink-type labels centralised in `lib/format.ts` (was duplicated
+  in FeedRow + ActivityList).
+
+### Fixed
+- Activity page: removed a leftover broken empty `<select>` rendered next to
+  the feed filter (dead artifact with an inline comment, visible in the DOM).
+- New-route / add-destination forms no longer default the sink dropdown to an
+  incomplete sink (which is a disabled option and failed on submit).
+- "All" activity count no longer shows `NaN`-prone arithmetic when a status
+  bucket is missing (each count now defaults to 0 independently).
+
 ## [0.15.0] — 2026-06-09 — Security & hardening pass
 
 A consolidated security review (High + Medium findings). Full write-up in

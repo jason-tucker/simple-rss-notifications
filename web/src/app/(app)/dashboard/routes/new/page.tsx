@@ -4,8 +4,11 @@ import { sql } from 'drizzle-orm'
 import { readSessionCookie } from '@/lib/auth/session'
 import { withUser } from '@/lib/db/withUser'
 import { RouteForm } from '@/components/RouteForm'
+import { Callout, PageHeader } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
+
+export const metadata = { title: 'New route' }
 
 export default async function NewRoutePage() {
   const session = await readSessionCookie()
@@ -39,19 +42,14 @@ export default async function NewRoutePage() {
   })
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold">New route</h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          <Link href="/dashboard/routes" className="hover:text-zinc-300">← back to routes</Link>
-        </p>
-      </header>
+    <div className="mx-auto max-w-2xl space-y-6">
+      <PageHeader title="New route" description="Pick a feed, then choose where its new items should go." />
 
       {feeds.length === 0 || sinks.length === 0 ? (
-        <div className="rounded border border-amber-700 bg-amber-950 p-4 text-sm text-amber-200">
+        <Callout tone="warn">
           {feeds.length === 0 && (<>You need at least one <Link href="/dashboard/feeds/new" className="underline">feed</Link>. </>)}
-          {sinks.length === 0 && (<>You need at least one <Link href="/dashboard/sinks/new?type=smtp" className="underline">sink</Link>.</>)}
-        </div>
+          {sinks.length === 0 && (<>You need at least one <Link href="/dashboard/sinks/new" className="underline">sink</Link>.</>)}
+        </Callout>
       ) : (
         <RouteForm mode="new" feeds={feeds} sinks={sinks} />
       )}

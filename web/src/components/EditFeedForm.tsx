@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Button, CheckboxRow, Field, Input } from '@/components/ui'
 
 interface Initial {
   id: string
@@ -49,33 +50,22 @@ export function EditFeedForm({ initial }: { initial: Initial }) {
     }
   }
 
-  const inputCls = 'mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none focus:border-zinc-500'
-
   return (
-    <form onSubmit={submit} className="space-y-3">
-      <label className="block">
-        <span className="text-sm text-zinc-400">Label</span>
-        <input required maxLength={100} value={label} onChange={(e) => setLabel(e.target.value)} className={inputCls} />
-      </label>
-      <label className="block">
-        <span className="text-sm text-zinc-400">RSS URL</span>
-        <input required type="url" value={url} onChange={(e) => setUrl(e.target.value)} className={inputCls} />
-        <span className="mt-1 block text-xs text-zinc-500">Changing the URL resets the HTTP cache hints (etag / last-modified).</span>
-      </label>
-      <label className="block">
-        <span className="text-sm text-zinc-400">Poll interval (minutes)</span>
-        <input required type="number" min={1} max={1440} value={pollMinutes} onChange={(e) => setPollMinutes(e.target.value)} className={inputCls} />
-      </label>
-      <label className="flex items-center gap-2 text-sm text-zinc-400">
-        <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-        Enabled
-      </label>
+    <form onSubmit={submit} className="space-y-4">
+      <Field label="Name">
+        <Input required maxLength={100} value={label} onChange={(e) => setLabel(e.target.value)} />
+      </Field>
+      <Field label="RSS URL" hint="Changing the URL resets the HTTP cache hints (etag / last-modified).">
+        <Input required type="url" value={url} onChange={(e) => setUrl(e.target.value)} />
+      </Field>
+      <Field label="Check every (minutes)">
+        <Input required type="number" min={1} max={1440} value={pollMinutes} onChange={(e) => setPollMinutes(e.target.value)} />
+      </Field>
+      <CheckboxRow label="Enabled" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
       {error && <p className="text-sm text-red-400">{error}</p>}
-      <div className="flex gap-2 pt-2">
-        <button type="submit" disabled={busy} className="rounded bg-zinc-100 px-4 py-2 font-medium text-zinc-900 hover:bg-white disabled:opacity-50">
-          {busy ? 'Saving…' : 'Save changes'}
-        </button>
-      </div>
+      <Button type="submit" variant="primary" disabled={busy}>
+        {busy ? 'Saving…' : 'Save changes'}
+      </Button>
     </form>
   )
 }
