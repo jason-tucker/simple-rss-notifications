@@ -19,8 +19,11 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className="dark">
+      {/* Each segment owns its own chrome: the (app) group renders the nav
+          shell, login/password render a centered card. The body is a flex
+          column (globals.css) so the footer stays pinned to the bottom. */}
       <body className="bg-zinc-950 text-zinc-100 antialiased">
-        <main className="flex-1 max-w-3xl mx-auto w-full px-6 py-10">{children}</main>
+        {children}
         <Footer />
       </body>
     </html>

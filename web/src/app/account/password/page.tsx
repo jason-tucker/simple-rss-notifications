@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Button, Card, Field, Input } from '@/components/ui'
 
 export default function ChangePasswordPage() {
   const router = useRouter()
@@ -47,36 +48,35 @@ export default function ChangePasswordPage() {
   }
 
   return (
-    <div className="max-w-sm mx-auto space-y-6">
-      <h1 className="text-2xl font-semibold">Change password</h1>
-      <p className="text-sm text-zinc-400">
-        Set a new password before you can use the dashboard. Minimum 8 characters.
-      </p>
-      <form onSubmit={submit} className="space-y-3">
-        <label className="block">
-          <span className="text-sm text-zinc-400">Current password</span>
-          <input type="password" autoComplete="current-password" required value={current}
-            onChange={(e) => setCurrent(e.target.value)}
-            className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none focus:border-zinc-500" />
-        </label>
-        <label className="block">
-          <span className="text-sm text-zinc-400">New password</span>
-          <input type="password" autoComplete="new-password" required value={next}
-            onChange={(e) => setNext(e.target.value)}
-            className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none focus:border-zinc-500" />
-        </label>
-        <label className="block">
-          <span className="text-sm text-zinc-400">Confirm new password</span>
-          <input type="password" autoComplete="new-password" required value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none focus:border-zinc-500" />
-        </label>
-        {error && <p className="text-sm text-red-400">{error}</p>}
-        <button type="submit" disabled={busy}
-          className="w-full rounded bg-zinc-100 px-3 py-2 font-medium text-zinc-900 disabled:opacity-50 hover:bg-white">
-          {busy ? 'Saving…' : 'Save new password'}
-        </button>
-      </form>
-    </div>
+    <main className="flex flex-1 items-center justify-center px-4 py-10">
+      <div className="w-full max-w-sm space-y-6">
+        <div className="space-y-1 text-center">
+          <h1 className="text-2xl font-semibold text-zinc-100">Change password</h1>
+          <p className="text-sm text-zinc-400">
+            Set a new password before you can use the dashboard. Minimum 8 characters.
+          </p>
+        </div>
+        <Card className="p-5">
+          <form onSubmit={submit} className="space-y-3">
+            <Field label="Current password">
+              <Input type="password" autoComplete="current-password" required value={current}
+                onChange={(e) => setCurrent(e.target.value)} />
+            </Field>
+            <Field label="New password">
+              <Input type="password" autoComplete="new-password" required value={next}
+                onChange={(e) => setNext(e.target.value)} />
+            </Field>
+            <Field label="Confirm new password">
+              <Input type="password" autoComplete="new-password" required value={confirm}
+                onChange={(e) => setConfirm(e.target.value)} />
+            </Field>
+            {error && <p className="text-sm text-red-400">{error}</p>}
+            <Button type="submit" variant="primary" disabled={busy} className="w-full">
+              {busy ? 'Saving…' : 'Save new password'}
+            </Button>
+          </form>
+        </Card>
+      </div>
+    </main>
   )
 }
