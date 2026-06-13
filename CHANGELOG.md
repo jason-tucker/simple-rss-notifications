@@ -5,6 +5,21 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.16.1] — 2026-06-13
+
+### Docs
+- **Agent usage policy** added to `CLAUDE.md`: always spawn agents; Haiku for lookups, Sonnet for coding, Opus for planning; delegation rules and parallelism guidance; note that `pnpm test` is safe locally (no build).
+- **Corrected `writeAudit` call shape**: field is `actor_user_id` (not `actor`), and there is an `ip` field — fixed in rule 5 and the "Where to add things" table.
+- **Corrected RLS/`withUser` wording**: `withUser` issues `SET LOCAL ROLE web_role` then `SELECT set_config('app.current_user_id', '<uuid>', true)` — not a single `SET LOCAL app.current_user_id = $1`. Auth model updated to match `web/src/lib/db/withUser.ts`.
+- **Corrected worker RLS bypass**: the worker connects as the DB owner and bypasses RLS because `FORCE ROW LEVEL SECURITY` is not enabled — owner-level, not a GRANT to a bypass role. Auth model updated to match `web/src/lib/db/client.ts`.
+- **Added `safeFetch` mandate** (`web/src/lib/ssrf.ts`): all outbound HTTP must go through `safeFetch()`, never raw `fetch()`.
+- **Added admin surface note**: `requireAdmin()` in `web/src/lib/auth/admin.ts`, `users.is_admin` column (migration `0011_users_is_admin`), `/dashboard/admin/users` page. Listed in "Where to add things".
+- **Added migration guidance** (was missing): `pnpm db:generate` → inspect → commit → worker applies on boot; never `drizzle-kit push` in production; add RLS policies for user-data tables.
+- **Added local dev commands** reference table: `pnpm dev`, `pnpm test`, `pnpm worker`, `pnpm db:generate`, `pnpm db:migrate`.
+- **Added re-auth deferred note**: `requireElevated` is not yet wired on any route (security review M1); forward-looking not live; pointer to `security-review/`.
+
+v0.16.1 · fa273d3
+
 ## [0.16.0] — 2026-06-11 — UI rebuilt from scratch
 
 A ground-up redesign of every page, focused on "super simple but easy to use".

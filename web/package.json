@@ -1,6 +1,6 @@
 {
   "name": "simple-rss-notifications-web",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "description": "Self-hosted multi-user notification bridge: RSS feeds to email (SMTP/Resend), ntfy, or Discord — UI-driven, no restarts.",
   "private": true,
   "type": "module",
