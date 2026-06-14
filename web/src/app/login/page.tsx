@@ -3,6 +3,7 @@
 import { Suspense, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Brand } from '@/components/Brand'
+import { Button, Card, Field, Input } from '@/components/ui'
 
 function LoginForm() {
   const router = useRouter()
@@ -45,56 +46,52 @@ function LoginForm() {
 
   return (
     <form onSubmit={submit} className="space-y-3">
-      <label className="block">
-        <span className="text-sm text-zinc-400">Username</span>
-        <input
+      <Field label="Username">
+        <Input
           type="text"
           autoComplete="username"
           required
           autoFocus
           value={username}
           onChange={(e) => setUsername(e.target.value)}
-          className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none focus:border-zinc-500"
         />
-      </label>
-      <label className="block">
-        <span className="text-sm text-zinc-400">Password</span>
-        <input
+      </Field>
+      <Field label="Password">
+        <Input
           type="password"
           autoComplete="current-password"
           required
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          className="mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none focus:border-zinc-500"
         />
-      </label>
+      </Field>
       {error && <p className="text-sm text-red-400">{error}</p>}
-      <button
-        type="submit"
-        disabled={busy}
-        className="w-full rounded bg-zinc-100 px-3 py-2 font-medium text-zinc-900 disabled:opacity-50 hover:bg-white"
-      >
+      <Button type="submit" variant="primary" disabled={busy} className="w-full">
         {busy ? 'Signing in…' : 'Sign in'}
-      </button>
+      </Button>
     </form>
   )
 }
 
 export default function LoginPage() {
   return (
-    <div className="max-w-sm mx-auto space-y-6">
-      <div className="flex flex-col items-center gap-3 text-center">
-        <Brand size={64} withWordmark={false} />
-        <h1 className="text-2xl font-semibold">
-          <span className="bg-gradient-to-r from-sky-400 via-violet-400 to-fuchsia-400 bg-clip-text text-transparent">Euphoric</span>
-          <span className="text-zinc-100"> Notify</span>
-        </h1>
-        <p className="text-sm text-zinc-500">Sign in to manage your feeds and notifications.</p>
+    <main className="flex flex-1 items-center justify-center px-4 py-10">
+      <div className="w-full max-w-sm space-y-6">
+        <div className="flex flex-col items-center gap-3 text-center">
+          <Brand size={64} withWordmark={false} />
+          <h1 className="text-2xl font-semibold">
+            <span className="bg-gradient-to-r from-sky-400 via-violet-400 to-fuchsia-400 bg-clip-text text-transparent">Euphoric</span>
+            <span className="text-zinc-100"> Notify</span>
+          </h1>
+          <p className="text-sm text-zinc-500">Sign in to manage your feeds and notifications.</p>
+        </div>
+        <Card className="p-5">
+          {/* Suspense required around useSearchParams() in Next 15 so prerender doesn't bail. */}
+          <Suspense fallback={<div className="text-sm text-zinc-500">Loading…</div>}>
+            <LoginForm />
+          </Suspense>
+        </Card>
       </div>
-      {/* Suspense required around useSearchParams() in Next 15 so prerender doesn't bail. */}
-      <Suspense fallback={<div className="text-sm text-zinc-500">Loading…</div>}>
-        <LoginForm />
-      </Suspense>
-    </div>
+    </main>
   )
 }

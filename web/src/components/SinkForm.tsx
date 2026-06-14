@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Button, CheckboxRow, Field, Input, Select } from '@/components/ui'
 
 export interface SinkInitial {
   id: string
@@ -128,142 +129,124 @@ export function SinkForm({ mode, type, initial }: Props) {
   const secretPlaceholder = isEdit && initial?.has_secret ? 'leave blank to keep current' : 'optional'
   const requiredSecretPlaceholder = isEdit && initial?.has_secret ? 'leave blank to keep current' : 'required'
 
-  const inputCls = 'mt-1 w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-zinc-100 outline-none focus:border-zinc-500'
-
   return (
-    <form onSubmit={submit} className="space-y-3">
-      <label className="block">
-        <span className="text-sm text-zinc-400">Label</span>
-        <input required maxLength={100} value={label} onChange={(e) => setLabel(e.target.value)} className={inputCls}
-          placeholder={type === 'smtp' ? 'e.g. IONOS' : type === 'resend' ? 'e.g. Resend prod' : 'e.g. My phone (ntfy)'} />
-      </label>
+    <form onSubmit={submit} className="space-y-4">
+      <Field label="Name" hint="Anything that helps you recognize it.">
+        <Input required maxLength={100} value={label} onChange={(e) => setLabel(e.target.value)}
+          placeholder={type === 'smtp' ? 'e.g. IONOS' : type === 'resend' ? 'e.g. Resend prod' : type === 'ntfy' ? 'e.g. My phone' : 'e.g. #alerts channel'} />
+      </Field>
 
       {(type === 'smtp' || type === 'resend') && (
         <>
-          <label className="block">
-            <span className="text-sm text-zinc-400">From email</span>
-            <input required type="email" value={fromEmail} onChange={(e) => setFromEmail(e.target.value)} className={inputCls} placeholder="online@jasontucker.me" />
-          </label>
-          <label className="block">
-            <span className="text-sm text-zinc-400">From name <span className="text-zinc-600">(optional)</span></span>
-            <input maxLength={100} value={fromName} onChange={(e) => setFromName(e.target.value)} className={inputCls} />
-          </label>
+          <Field label="From email">
+            <Input required type="email" value={fromEmail} onChange={(e) => setFromEmail(e.target.value)} placeholder="notify@example.com" />
+          </Field>
+          <Field label="From name" optional>
+            <Input maxLength={100} value={fromName} onChange={(e) => setFromName(e.target.value)} />
+          </Field>
         </>
       )}
 
       {type === 'smtp' && (
         <>
           <div className="grid grid-cols-3 gap-3">
-            <label className="col-span-2 block">
-              <span className="text-sm text-zinc-400">Host</span>
-              <input required value={host} onChange={(e) => setHost(e.target.value)} className={inputCls} placeholder="smtp.ionos.com" />
-            </label>
-            <label className="block">
-              <span className="text-sm text-zinc-400">Port</span>
-              <input required type="number" min={1} max={65535} value={port} onChange={(e) => setPort(e.target.value)} className={inputCls} />
-            </label>
+            <div className="col-span-2">
+              <Field label="Host">
+                <Input required value={host} onChange={(e) => setHost(e.target.value)} placeholder="smtp.example.com" />
+              </Field>
+            </div>
+            <Field label="Port">
+              <Input required type="number" min={1} max={65535} value={port} onChange={(e) => setPort(e.target.value)} />
+            </Field>
           </div>
-          <label className="block">
-            <span className="text-sm text-zinc-400">Username</span>
-            <input required value={username} onChange={(e) => setUsername(e.target.value)} className={inputCls} placeholder="online@jasontucker.me" />
-          </label>
-          <label className="block">
-            <span className="text-sm text-zinc-400">Password</span>
-            <input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={requiredSecretPlaceholder} className={inputCls} />
-            <span className="mt-1 block text-xs text-zinc-500">
-              Encrypted at rest. {isEdit && initial?.has_secret ? 'Leave blank to keep current; type a new value to rotate.' : 'Required.'}
-            </span>
-          </label>
-          <label className="flex items-center gap-2 text-sm text-zinc-400">
-            <input type="checkbox" checked={useTls} onChange={(e) => setUseTls(e.target.checked)} />
-            Require TLS (recommended)
-          </label>
+          <Field label="Username">
+            <Input required value={username} onChange={(e) => setUsername(e.target.value)} placeholder="notify@example.com" />
+          </Field>
+          <Field
+            label="Password"
+            hint={`Encrypted at rest. ${isEdit && initial?.has_secret ? 'Leave blank to keep current; type a new value to rotate.' : 'Required.'}`}
+          >
+            <Input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={requiredSecretPlaceholder} />
+          </Field>
+          <CheckboxRow label="Require TLS (recommended)" checked={useTls} onChange={(e) => setUseTls(e.target.checked)} />
         </>
       )}
 
       {type === 'resend' && (
-        <label className="block">
-          <span className="text-sm text-zinc-400">API key</span>
-          <input type="password" autoComplete="new-password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={requiredSecretPlaceholder} className={inputCls} />
-          <span className="mt-1 block text-xs text-zinc-500">
-            Encrypted at rest. {isEdit && initial?.has_secret ? 'Leave blank to keep the current key.' : 'Required.'}
-          </span>
-        </label>
+        <Field
+          label="API key"
+          hint={`Encrypted at rest. ${isEdit && initial?.has_secret ? 'Leave blank to keep the current key.' : 'Required.'}`}
+        >
+          <Input type="password" autoComplete="new-password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={requiredSecretPlaceholder} />
+        </Field>
       )}
 
       {type === 'discord_webhook' && (
         <>
-          <label className="block">
-            <span className="text-sm text-zinc-400">Webhook URL</span>
-            <input type="password" autoComplete="new-password" value={webhookUrl} onChange={(e) => setWebhookUrl(e.target.value)} placeholder={requiredSecretPlaceholder} className={inputCls} />
-            <span className="mt-1 block text-xs text-zinc-500">
-              Encrypted at rest. Get from Discord channel settings → Integrations → Webhooks → Copy URL. Must start with <code className="text-zinc-300">https://discord.com/api/webhooks/</code>.
-              {isEdit && initial?.has_secret ? ' Leave blank to keep current.' : ''}
-            </span>
-          </label>
-          <label className="block">
-            <span className="text-sm text-zinc-400">Display name <span className="text-zinc-600">(optional override)</span></span>
-            <input maxLength={80} value={discordUsername} onChange={(e) => setDiscordUsername(e.target.value)} className={inputCls} placeholder="Euphoric Notify" />
-          </label>
-          <label className="block">
-            <span className="text-sm text-zinc-400">Avatar URL <span className="text-zinc-600">(optional override)</span></span>
-            <input type="url" maxLength={2048} value={avatarUrl} onChange={(e) => setAvatarUrl(e.target.value)} className={inputCls} placeholder="https://…/logo.png" />
-          </label>
-          <label className="flex items-center gap-2 text-sm text-zinc-400">
-            <input type="checkbox" checked={useEmbeds} onChange={(e) => setUseEmbeds(e.target.checked)} />
-            Send as rich embed (title + description + URL). Uncheck for plain text.
-          </label>
+          <Field
+            label="Webhook URL"
+            hint={
+              <>
+                Encrypted at rest. Get from Discord channel settings → Integrations → Webhooks → Copy URL. Must start with{' '}
+                <code className="text-zinc-300">https://discord.com/api/webhooks/</code>.
+                {isEdit && initial?.has_secret ? ' Leave blank to keep current.' : ''}
+              </>
+            }
+          >
+            <Input type="password" autoComplete="new-password" value={webhookUrl} onChange={(e) => setWebhookUrl(e.target.value)} placeholder={requiredSecretPlaceholder} />
+          </Field>
+          <Field label="Display name" optional hint="Overrides the webhook's default bot name.">
+            <Input maxLength={80} value={discordUsername} onChange={(e) => setDiscordUsername(e.target.value)} placeholder="Euphoric Notify" />
+          </Field>
+          <Field label="Avatar URL" optional>
+            <Input type="url" maxLength={2048} value={avatarUrl} onChange={(e) => setAvatarUrl(e.target.value)} placeholder="https://…/logo.png" />
+          </Field>
+          <CheckboxRow
+            label="Send as rich embed (title + description + URL). Uncheck for plain text."
+            checked={useEmbeds}
+            onChange={(e) => setUseEmbeds(e.target.checked)}
+          />
         </>
       )}
 
       {type === 'ntfy' && (
         <>
-          <label className="block">
-            <span className="text-sm text-zinc-400">Server URL</span>
-            <input required type="url" value={serverUrl} onChange={(e) => setServerUrl(e.target.value)} className={inputCls} placeholder="https://ntfy.sh" />
-            <span className="mt-1 block text-xs text-zinc-500">Defaults to the public ntfy.sh. Use your own URL for a self-hosted instance.</span>
-          </label>
-          <label className="block">
-            <span className="text-sm text-zinc-400">Topic</span>
-            <input required maxLength={64} value={topic} onChange={(e) => setTopic(e.target.value)} className={inputCls} placeholder="my-feeds-tucker" />
-            <span className="mt-1 block text-xs text-zinc-500">Alphanumeric, dash, or underscore. Subscribe to this topic in the ntfy app.</span>
-          </label>
-          <label className="block">
-            <span className="text-sm text-zinc-400">Access token <span className="text-zinc-600">(only if topic is protected)</span></span>
-            <input type="password" autoComplete="new-password" value={token} onChange={(e) => setToken(e.target.value)} placeholder={secretPlaceholder} className={inputCls} />
-            <span className="mt-1 block text-xs text-zinc-500">Encrypted at rest. Leave blank for public topics.</span>
-          </label>
+          <Field label="Server URL" hint="Defaults to the public ntfy.sh. Use your own URL for a self-hosted instance.">
+            <Input required type="url" value={serverUrl} onChange={(e) => setServerUrl(e.target.value)} placeholder="https://ntfy.sh" />
+          </Field>
+          <Field label="Topic" hint="Letters, numbers, dash, or underscore. Subscribe to this topic in the ntfy app.">
+            <Input required maxLength={64} value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="my-feeds" />
+          </Field>
+          <Field label="Access token" optional hint="Encrypted at rest. Leave blank for public topics.">
+            <Input type="password" autoComplete="new-password" value={token} onChange={(e) => setToken(e.target.value)} placeholder={secretPlaceholder} />
+          </Field>
           <div className="grid grid-cols-2 gap-3">
-            <label className="block">
-              <span className="text-sm text-zinc-400">Default priority</span>
-              <select value={priority} onChange={(e) => setPriority(e.target.value)} className={inputCls}>
+            <Field label="Default priority">
+              <Select value={priority} onChange={(e) => setPriority(e.target.value)}>
                 <option value="1">1 — min</option>
                 <option value="2">2 — low</option>
                 <option value="3">3 — default</option>
                 <option value="4">4 — high</option>
                 <option value="5">5 — max</option>
-              </select>
-            </label>
-            <label className="block">
-              <span className="text-sm text-zinc-400">Default tags</span>
-              <input maxLength={200} value={tags} onChange={(e) => setTags(e.target.value)} className={inputCls} placeholder="rss,info" />
-              <span className="mt-1 block text-xs text-zinc-500">Comma-separated. ntfy renders matching ones as emoji.</span>
-            </label>
+              </Select>
+            </Field>
+            <Field label="Default tags" hint="Comma-separated. ntfy renders matching ones as emoji.">
+              <Input maxLength={200} value={tags} onChange={(e) => setTags(e.target.value)} placeholder="rss,info" />
+            </Field>
           </div>
-          <label className="flex items-center gap-2 text-sm text-zinc-400">
-            <input type="checkbox" checked={includeLink} onChange={(e) => setIncludeLink(e.target.checked)} />
-            Include the feed item&apos;s link as the push&apos;s click action
-          </label>
+          <CheckboxRow
+            label="Open the feed item's link when the push is tapped"
+            checked={includeLink}
+            onChange={(e) => setIncludeLink(e.target.checked)}
+          />
         </>
       )}
 
       {error && <p className="text-sm text-red-400">{error}</p>}
 
-      <div className="flex gap-2 pt-2">
-        <button type="submit" disabled={busy} className="rounded bg-zinc-100 px-4 py-2 font-medium text-zinc-900 hover:bg-white disabled:opacity-50">
-          {busy ? 'Saving…' : (isEdit ? 'Save changes' : 'Create sink')}
-        </button>
-      </div>
+      <Button type="submit" variant="primary" disabled={busy}>
+        {busy ? 'Saving…' : (isEdit ? 'Save changes' : 'Add sink')}
+      </Button>
     </form>
   )
 }

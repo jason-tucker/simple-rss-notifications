@@ -4,6 +4,32 @@ These instructions apply to Claude Code and any AI coding tool working in this r
 
 ---
 
+## Agent usage
+
+Always spawn agents to do work. Haiku for lookups. Sonnet for coding. Opus for planning.
+
+Use agents proactively — delegation is the default, not a fallback. Match the model to the task:
+
+- **Haiku** — file discovery, repository searches, quick lookups, lightweight analysis, and simple verification.
+- **Sonnet** — coding, implementation, refactoring, debugging, writing tests, editing documentation, and normal technical work.
+- **Opus** — architecture, complex planning, cross-repository strategy, high-risk changes, difficult debugging strategy, and final reconciliation.
+
+How to delegate well:
+
+- Run independent work in parallel; serialize only when there is a real dependency.
+- Give every delegated task a precise scope and a concrete expected output.
+- Require every agent to cite the paths, symbols, commands, or repository evidence behind its conclusions.
+- Demand actionable results, not generic summaries.
+- Never let two agents edit the same file at once — assign explicit file ownership and coordinate overlaps through the orchestrator.
+- Resolve conflicting recommendations with repository evidence, not preference.
+- Validate every agent's output before accepting it; re-run or re-scope on doubt.
+- Use agents to improve speed or quality — not to create pointless duplication.
+- The orchestrator reviews all delegated work and remains responsible for final correctness.
+
+To validate without OOMing the VPS (rule 2 bans `pnpm typecheck`/`tsc`/`next build` there): `pnpm test` is safe to run locally — it uses tsx + Node's test runner, no full build.
+
+---
+
 ## Mandatory rules
 
 ### 1. Always update CHANGELOG.md
@@ -19,7 +45,7 @@ Every container talks over the docker network. Cloudflare Tunnel is the only ing
 The app never hardcodes a domain. `PUBLIC_BASE_URL` env (set at deploy time) is the source of truth for cookie domain, CSRF origin check, OAuth redirect URI (future), etc.
 
 ### 5. Audit every state-changing action
-Every write API route calls `writeAudit({actor, action, target_type, target_id, before, after, via: 'web'})`. Stored secrets (SMTP password, Resend key, ntfy token) are NEVER included in `before`/`after` — substitute `[REDACTED]`.
+Every write API route calls `writeAudit({actor_user_id, action, target_type, target_id?, before?, after?, via: 'web', ip?})`. Stored secrets (SMTP password, Resend key, ntfy token) are NEVER included in `before`/`after` — substitute `[REDACTED]`.
 
 ### 6. Main-only branching
 All feature work targets `main` directly via PRs.
@@ -83,7 +109,7 @@ Compose `up -d` recreates containers whenever the compose file or env changes. c
 - **Username + password** (argon2id) — no OAuth, no third-party auth providers.
 - **JWT session** (jose HS512, `__Host-session` cookie, sliding 3-day TTL, server-side `jti` mirror in `web_sessions` for revocation).
 - **Re-auth password** — separate `users.reauth_password_hash`. Successful reauth mints a new JWT with `elevatedUntil` claim valid 10 min. Required for: revealing or changing any stored secret, changing the account password, changing the reauth password itself, deleting account.
-- **Postgres RLS** on every user-data table, keyed on `current_setting('app.current_user_id')`. Every web query runs in a transaction whose first statement is `SET LOCAL app.current_user_id = $1`. The worker runs as a separate Postgres role that bypasses RLS (GRANT-level, not application-level).
+- **Postgres RLS** on every user-data table, keyed on `current_setting('app.current_user_id')`. Web queries that touch user data go through `withUser(userId, fn)` (`web/src/lib/db/withUser.ts`), which opens a transaction and issues `SET LOCAL ROLE web_role` followed by `SELECT set_config('app.current_user_id', '<uuid>', true)` — this demotes the connection out of owner privileges for the duration of the transaction so RLS policies apply. Outside `withUser` (admin/login flows with no userId yet) the connection remains as owner. The worker connects as the DB owner; because `FORCE ROW LEVEL SECURITY` is NOT enabled, the owner bypasses RLS by default — owner-level bypass, not a GRANT to a separate bypass role.
 
 ## Where to add things
 
@@ -93,8 +119,46 @@ Compose `up -d` recreates containers whenever the compose file or env changes. c
 | New page | `web/src/app/<area>/page.tsx` — gate via `getSession()` in the layout/page |
 | New DB table | `web/src/lib/db/schema/<name>.ts` — add RLS policies in the migration |
 | New worker task | `web/src/worker/<task>.ts` — register in `web/src/worker/index.ts` |
-| New audit hook | `web/src/lib/audit.ts` — call `writeAudit({...})` from the route handler |
+| New audit hook | `web/src/lib/audit.ts` — call `writeAudit({actor_user_id, action, target_type, target_id?, before?, after?, via?, ip?})` from the route handler |
+| New admin-gated route | Use `requireAdmin()` from `web/src/lib/auth/admin.ts` (not `withAuth`); admin routes run as DB owner so they bypass RLS and can see/modify any user row — no `withUser` wrapper. See `/dashboard/admin/users` for the pattern |
 | New env var | `web/src/lib/env.ts` (zod schema) + `.env.example` + `scripts/install.sh` if it needs auto-generation |
+
+## Outbound HTTP — always use `safeFetch`
+
+Every outbound HTTP call (RSS feeds, ntfy, Discord webhooks, Resend API, and any future sink or external URL) **must** go through `safeFetch()` from `web/src/lib/ssrf.ts` — never raw `fetch()`. `safeFetch` resolves the host once, pins the TCP connection to the validated IP (defeating DNS-rebinding/TOCTOU), follows redirects manually re-validating each `Location`, enforces an end-to-end timeout, and decodes gzip/deflate/br. Use `checkSafeOutboundUrl(url)` for API-route save-time validation of user-pasted URLs, and `isPrivateHost(host)` for the SMTP guard (no URL layer). New call sites that use raw `fetch()` instead of `safeFetch` will be treated as a security defect.
+
+## Schema changes — migration guidance
+
+The schema is owned by this repo. There are no SQL migration files in `.gitignore` — they are committed (`web/src/lib/db/migrations/0000–0011`).
+
+To change the schema:
+
+1. Edit the schema module(s) under `web/src/lib/db/schema/*.ts`.
+2. `pnpm db:generate` — emits a reviewed `.sql` file under `web/src/lib/db/migrations/` plus a snapshot and journal entry.
+3. **Inspect the generated `.sql`** (especially any `DROP` or column removal) before committing.
+4. Commit the `.sql` and snapshot together with the schema change.
+5. The migration runner (`tsx scripts/migrate.ts` = `pnpm db:migrate`) applies migrations forward-only. In production the **worker** applies pending migrations on boot (step 3 of its boot sequence); the web container never runs migrations.
+6. Add **RLS policies** in the migration for any new user-data table (`web_role` RW GRANT + `CREATE POLICY` keyed on `app.current_user_id`).
+
+**Never run `drizzle-kit push` in production** — it bypasses the forward-only migration log and can silently mutate tables.
+
+## Local dev commands
+
+From `web/`:
+
+| Command | What it does |
+|---|---|
+| `pnpm dev` | Start the Next.js dev server on port 3000 |
+| `pnpm test` | Run unit tests via tsx + Node's test runner — safe locally, no full build |
+| `pnpm worker` | Run the worker locally via tsx (no build needed) |
+| `pnpm db:generate` | Emit a new migration `.sql` from schema changes |
+| `pnpm db:migrate` | Apply pending migrations against the DB in `DATABASE_URL` |
+
+The full env-var list (enforced by zod on startup) is documented in `web/src/lib/env.ts` and `.env.example`. See also the **Configuration** section in `README.md`.
+
+## Re-auth gate — deferred
+
+The `withAuth` wrapper supports a `requireElevated` option that gates routes behind the re-auth password (`users.reauth_password_hash` → `elevatedUntil` JWT claim, 10-min window). The auth-model bullet above describes the intended semantics (revealing/changing stored secrets, changing account or reauth passwords, deleting the account). However, **`requireElevated` is not yet wired on any production route** — it is a security review deferred item (M1). Treat the "Required for:" list as forward-looking, not live. See `security-review/` for the full threat model and the list of deferred items.
 
 ## Deployment
 

@@ -1,11 +1,13 @@
-import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { sql } from 'drizzle-orm'
 import { readSessionCookie } from '@/lib/auth/session'
 import { withUser } from '@/lib/db/withUser'
 import { FeedRow } from '@/components/FeedRow'
+import { ButtonLink, EmptyState, PageHeader } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
+
+export const metadata = { title: 'Feeds' }
 
 export default async function FeedsPage() {
   const session = await readSessionCookie()
@@ -29,21 +31,19 @@ export default async function FeedsPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Feeds</h1>
-        <Link href="/dashboard/feeds/new" className="rounded border border-zinc-700 px-3 py-1.5 text-sm hover:bg-zinc-800">+ New feed</Link>
-      </header>
-      <p className="text-sm text-zinc-400">
-        RSS sources the worker polls. Pair a feed with a sink via a{' '}
-        <Link href="/dashboard/routes" className="underline hover:text-zinc-200">route</Link>{' '}
-        to actually send notifications.
-      </p>
+      <PageHeader
+        title="Feeds"
+        description="The RSS sources being watched. Connect a feed to a sink with a route to actually get notified."
+        action={<ButtonLink variant="primary" size="sm" href="/dashboard/feeds/new">+ Add feed</ButtonLink>}
+      />
       {feeds.length === 0 ? (
-        <div className="rounded border border-zinc-800 bg-zinc-900 p-6 text-sm text-zinc-500">
-          No feeds yet. Add one above.
-        </div>
+        <EmptyState
+          title="No feeds yet"
+          hint="Add an RSS URL and the worker starts watching it within seconds."
+          action={<ButtonLink variant="primary" size="sm" href="/dashboard/feeds/new">+ Add feed</ButtonLink>}
+        />
       ) : (
-        <ul className="space-y-2">
+        <div className="space-y-2">
           {feeds.map((f) => (
             <FeedRow key={f.id} feed={{
               id: f.id, label: f.label, url: f.url, enabled: f.enabled,
@@ -55,11 +55,8 @@ export default async function FeedsPage() {
               backfill_mode: f.backfill_mode,
             }} />
           ))}
-        </ul>
+        </div>
       )}
-      <p className="text-xs text-zinc-600">
-        <Link href="/" className="hover:text-zinc-400">← back to dashboard</Link>
-      </p>
     </div>
   )
 }

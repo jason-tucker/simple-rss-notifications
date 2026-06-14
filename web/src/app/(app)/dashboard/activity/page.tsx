@@ -4,8 +4,11 @@ import { sql } from 'drizzle-orm'
 import { readSessionCookie } from '@/lib/auth/session'
 import { withUser } from '@/lib/db/withUser'
 import { ActivityList, type ActivityRow } from '@/components/ActivityList'
+import { Callout, PageHeader, cx } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
+
+export const metadata = { title: 'Activity' }
 
 const VALID_STATUS = new Set(['pending', 'sent', 'failed', 'skipped'])
 
@@ -81,78 +84,75 @@ export default async function ActivityPage({
   const total = totalRows[0]?.c ?? 0
 
   const countMap = Object.fromEntries(counts.map((c) => [c.status, c.c])) as Record<string, number>
+  const allCount = (countMap.sent ?? 0) + (countMap.failed ?? 0) + (countMap.pending ?? 0) + (countMap.skipped ?? 0)
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold">Activity</h1>
-        <p className="mt-1 text-sm text-zinc-400">
-          Every dispatch through Euphoric Notify — what got sent, where, and any failures.
-        </p>
-      </header>
+      <PageHeader
+        title="Activity"
+        description="Every notification — what got sent, where, and any failures."
+      />
 
       {unhealthy.length > 0 && (
-        <div className="rounded border border-red-900 bg-red-950 p-3 space-y-2 text-sm">
-          <p className="font-medium text-red-200">
-            {unhealthy.length} feed{unhealthy.length === 1 ? '' : 's'} can&apos;t be fetched
-          </p>
-          <p className="text-xs text-red-300">
-            These are <em>poll</em> failures (the worker can&apos;t reach the URL) — they don&apos;t show up
-            below as dispatches because no items are being read in the first place. Fix the feed URL
-            to clear them.
-          </p>
-          <ul className="space-y-1.5 text-xs">
-            {unhealthy.map((f) => (
-              <li key={f.id} className="rounded bg-red-950/60 p-2">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <Link href={`/dashboard/feeds/${f.id}`} className="font-medium text-red-100 hover:underline">
-                    {f.label}
-                  </Link>
-                  <span className="text-red-300">{f.consecutive_failures} consecutive failure{f.consecutive_failures === 1 ? '' : 's'}</span>
-                </div>
-                <code className="mt-1 block break-all text-red-300/80">{f.url}</code>
-                {f.last_error && (
-                  <p className="mt-1 text-red-400">last error: {f.last_error}</p>
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
+        <Callout tone="danger">
+          <div className="space-y-2">
+            <p className="font-medium">
+              {unhealthy.length} feed{unhealthy.length === 1 ? '' : 's'} can&apos;t be fetched
+            </p>
+            <p className="text-xs text-red-300">
+              These are <em>poll</em> failures (the worker can&apos;t reach the URL) — they don&apos;t show up
+              below as dispatches because no items are being read in the first place. Fix the feed URL
+              to clear them.
+            </p>
+            <ul className="space-y-1.5 text-xs">
+              {unhealthy.map((f) => (
+                <li key={f.id} className="rounded bg-red-950/60 p-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Link href={`/dashboard/feeds/${f.id}`} className="font-medium text-red-100 hover:underline">
+                      {f.label}
+                    </Link>
+                    <span className="text-red-300">{f.consecutive_failures} consecutive failure{f.consecutive_failures === 1 ? '' : 's'}</span>
+                  </div>
+                  <code className="mt-1 block break-all text-red-300/80">{f.url}</code>
+                  {f.last_error && <p className="mt-1 text-red-400">last error: {f.last_error}</p>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </Callout>
       )}
 
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className="text-zinc-500">Filter:</span>
-        <FilterChip href="/dashboard/activity" active={!status && !feedFilter} label={`All (${countMap.sent + countMap.failed + countMap.pending + countMap.skipped || 0})`} />
-        <FilterChip href="/dashboard/activity?status=pending" active={status === 'pending'} label={`Pending (${countMap.pending ?? 0})`} />
-        <FilterChip href="/dashboard/activity?status=sent" active={status === 'sent'} label={`Sent (${countMap.sent ?? 0})`} />
-        <FilterChip href="/dashboard/activity?status=failed" active={status === 'failed'} label={`Failed (${countMap.failed ?? 0})`} className="border-red-900 text-red-300" />
-        <FilterChip href="/dashboard/activity?status=skipped" active={status === 'skipped'} label={`Skipped (${countMap.skipped ?? 0})`} />
-        {feeds.length > 0 && (
-          <select
-            defaultValue={feedFilter ?? ''}
-            onChange={undefined}
-            className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-100"
-            // server component — we use a tiny form to navigate.
-            // see FeedFilterForm below.
-          />
-        )}
-        <FeedFilterForm feeds={feeds} current={feedFilter ?? ''} status={status} />
+        <FilterChip href={filterHref(null, feedFilter)} active={!status} label={`All (${allCount})`} />
+        <FilterChip href={filterHref('pending', feedFilter)} active={status === 'pending'} label={`Pending (${countMap.pending ?? 0})`} />
+        <FilterChip href={filterHref('sent', feedFilter)} active={status === 'sent'} label={`Sent (${countMap.sent ?? 0})`} />
+        <FilterChip href={filterHref('failed', feedFilter)} active={status === 'failed'} label={`Failed (${countMap.failed ?? 0})`} className={status === 'failed' ? '' : 'border-red-900 text-red-300'} />
+        <FilterChip href={filterHref('skipped', feedFilter)} active={status === 'skipped'} label={`Skipped (${countMap.skipped ?? 0})`} />
+        {feeds.length > 0 && <FeedFilterForm feeds={feeds} current={feedFilter ?? ''} status={status} />}
       </div>
 
       <ActivityList rows={rows.map(toActivityRow)} total={total} />
-
-      <p className="text-xs text-zinc-600">
-        <Link href="/" className="hover:text-zinc-400">← back to dashboard</Link>
-      </p>
     </div>
   )
+}
+
+function filterHref(status: string | null, feed: string | null): string {
+  const q = new URLSearchParams()
+  if (status) q.set('status', status)
+  if (feed) q.set('feed', feed)
+  const s = q.toString()
+  return s ? `/dashboard/activity?${s}` : '/dashboard/activity'
 }
 
 function FilterChip({ href, active, label, className }: { href: string; active: boolean; label: string; className?: string }) {
   return (
     <Link
       href={href}
-      className={`rounded border px-2 py-1 ${active ? 'border-zinc-200 bg-zinc-100 text-zinc-900' : 'border-zinc-700 text-zinc-300 hover:bg-zinc-800'} ${className ?? ''}`}
+      className={cx(
+        'rounded-md border px-2.5 py-1 transition-colors',
+        active ? 'border-zinc-200 bg-zinc-100 text-zinc-900' : 'border-zinc-700 text-zinc-300 hover:bg-zinc-800',
+        className,
+      )}
     >
       {label}
     </Link>
@@ -163,11 +163,11 @@ function FeedFilterForm({ feeds, current, status }: { feeds: Array<{ id: string;
   return (
     <form action="/dashboard/activity" className="flex items-center gap-1">
       {status && <input type="hidden" name="status" value={status} />}
-      <select name="feed" defaultValue={current} className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-100">
+      <select name="feed" defaultValue={current} className="rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs text-zinc-100">
         <option value="">All feeds</option>
         {feeds.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
       </select>
-      <button type="submit" className="rounded border border-zinc-700 px-2 py-1 text-zinc-300 hover:bg-zinc-800">Apply</button>
+      <button type="submit" className="rounded-md border border-zinc-700 px-2.5 py-1 text-zinc-300 hover:bg-zinc-800">Apply</button>
     </form>
   )
 }

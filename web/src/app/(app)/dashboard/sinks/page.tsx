@@ -1,11 +1,13 @@
-import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { sql } from 'drizzle-orm'
 import { readSessionCookie } from '@/lib/auth/session'
 import { withUser } from '@/lib/db/withUser'
 import { SinkRow, type SinkSummary } from '@/components/SinkRow'
+import { ButtonLink, Callout, EmptyState, PageHeader } from '@/components/ui'
 
 export const dynamic = 'force-dynamic'
+
+export const metadata = { title: 'Sinks' }
 
 export default async function SinksPage() {
   const session = await readSessionCookie()
@@ -64,41 +66,29 @@ export default async function SinksPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Sinks</h1>
-        <div className="flex gap-2">
-          <Link href="/dashboard/sinks/new?type=smtp" className="rounded border border-zinc-700 px-3 py-1.5 text-sm hover:bg-zinc-800">+ SMTP</Link>
-          <Link href="/dashboard/sinks/new?type=resend" className="rounded border border-zinc-700 px-3 py-1.5 text-sm hover:bg-zinc-800">+ Resend</Link>
-          <Link href="/dashboard/sinks/new?type=ntfy" className="rounded border border-zinc-700 px-3 py-1.5 text-sm hover:bg-zinc-800">+ ntfy</Link>
-          <Link href="/dashboard/sinks/new?type=discord_webhook" className="rounded border border-zinc-700 px-3 py-1.5 text-sm hover:bg-zinc-800">+ Discord</Link>
-        </div>
-      </header>
-
-      <p className="text-sm text-zinc-400">
-        Outbound destinations. Pair a sink with a feed via a{' '}
-        <Link href="/dashboard/routes" className="underline hover:text-zinc-200">route</Link>{' '}
-        to actually send notifications.
-      </p>
+      <PageHeader
+        title="Sinks"
+        description="Where notifications get delivered — email (SMTP or Resend), ntfy push, or Discord."
+        action={<ButtonLink variant="primary" size="sm" href="/dashboard/sinks/new">+ Add sink</ButtonLink>}
+      />
 
       {anyIncomplete && (
-        <div className="rounded border border-amber-700 bg-amber-950 px-3 py-2 text-sm text-amber-200">
+        <Callout tone="warn">
           One or more sinks are incomplete — paste the missing password / API key to enable them.
-        </div>
+        </Callout>
       )}
 
       {sinks.length === 0 ? (
-        <div className="rounded border border-zinc-800 bg-zinc-900 p-6 text-sm text-zinc-500">
-          No sinks yet. Add one above to get started.
-        </div>
+        <EmptyState
+          title="No sinks yet"
+          hint="A sink is where notifications go. Add one, then connect it to a feed with a route."
+          action={<ButtonLink variant="primary" size="sm" href="/dashboard/sinks/new">+ Add sink</ButtonLink>}
+        />
       ) : (
-        <ul className="space-y-2">
+        <div className="space-y-2">
           {sinks.map((s) => <SinkRow key={`${s.type}:${s.id}`} sink={s} />)}
-        </ul>
+        </div>
       )}
-
-      <p className="text-xs text-zinc-600">
-        <Link href="/" className="hover:text-zinc-400">← back to dashboard</Link>
-      </p>
     </div>
   )
 }
