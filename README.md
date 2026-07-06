@@ -106,11 +106,12 @@ Deploy-plumbing vars (`WEB_IMAGE`, `CADDY_IMAGE`, `PORT`, `NEXT_HOST`/`NEXT_ALIA
 
 ## Usage
 
-### Authentication & re-auth
+### Authentication, admin & re-auth
 
 - **Username + password** (argon2id) — no OAuth or third-party identity providers. Login is rate-limited before the password check so brute-forcers can't even burn hashing CPU, and unknown usernames still pay the hashing cost to avoid timing/enumeration leaks.
 - **JWT session**: `jose` HS512 token in a `__Host-session` cookie (HttpOnly, Secure, SameSite=Lax), with a server-side `jti` row in `web_sessions` for revocation and a sliding ~3-day TTL. A password change since a token was issued invalidates that token.
-- **Re-auth (step-up) password**: a separate `users.reauth_password_hash`. Successful re-auth mints a new JWT carrying an `elevatedUntil` claim (valid ~10 min). Elevation is required to reveal or change any stored secret, change the account or re-auth password, or delete the account.
+- **Admin accounts** (`users.is_admin`, migration `0011_users_is_admin`): the bootstrap user is created as admin; on existing single-user installs the migration back-fills the oldest user. `/dashboard/admin/users` (gated by `requireAdmin()` in `web/src/lib/auth/admin.ts`) lets an admin create accounts, grant/revoke admin, force a password reset, or remove a user — with a last-admin guard so the only remaining admin can't demote or delete themselves into a lockout.
+- **Re-auth (step-up) password**: `withAuth()` supports a `requireElevated` option keyed off a separate `users.reauth_password_hash` and an `elevatedUntil` JWT claim (~10 min after a successful re-auth). **This gate is not yet wired on any route** — it's a deferred security-review item (see `security-review/`), not live enforcement today.
 
 ### Feeds → routes → destinations → sinks
 
