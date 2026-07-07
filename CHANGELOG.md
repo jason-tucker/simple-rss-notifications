@@ -5,6 +5,13 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.16.2] — 2026-07-06
+
+### Docs
+- **Corrected `README.md`'s re-auth claim**: the "Authentication & re-auth" section stated elevation "is required" to reveal/change secrets, implying live enforcement. Cross-checked against `web/src/lib/auth/withAuth.ts` — `requireElevated` is not set `true` on any route today; it's a deferred security-review item (M1), not live behavior. Reworded to match `CLAUDE.md`'s existing "forward-looking, not live" framing.
+- **Added the admin surface to `README.md`**: `users.is_admin` (migration `0011_users_is_admin`), `requireAdmin()`, the `/dashboard/admin/users` page, and its last-admin-lockout guard — previously undocumented in the README despite being covered in `CLAUDE.md` since 0.16.1.
+- Verified the rest of the README (architecture diagram, stack, env var table, `safeFetch`/SSRF policy, RLS/`withUser` model, dispatch/retry/audit, deployment and Watchtower model, CI/branch/project-board conventions) against `web/src/lib/env.ts`, `docker-compose.yml`, `web/src/worker/*`, `web/src/lib/ssrf.ts`, and `web/package.json` — no other stale claims found.
+
 ## [0.16.1] — 2026-06-13
 
 ### Docs
