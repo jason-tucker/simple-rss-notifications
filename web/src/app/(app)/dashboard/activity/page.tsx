@@ -24,9 +24,9 @@ export default async function ActivityPage({
   const status = params.status && VALID_STATUS.has(params.status) ? params.status : null
   const feedFilter = params.feed && /^[0-9a-f-]{36}$/.test(params.feed) ? params.feed : null
 
-  // Five independent read queries fan out across separate connections via
+  // Four independent read queries fan out across separate connections via
   // parallel withUser() calls (postgres-js serializes within one tx).
-  const [rows, totalRows, feeds, counts, unhealthy] = await Promise.all([
+  const [rows, countRows, feeds, unhealthy] = await Promise.all([
     withUser(session.uid, (tx) => tx.execute<{
       id: string; status: string; attempts: number
       scheduled_at: Date; dispatched_at: Date | null
@@ -59,17 +59,28 @@ export default async function ActivityPage({
       ORDER BY d.created_at DESC
       LIMIT 100
     `)),
-    withUser(session.uid, (tx) => tx.execute<{ c: number }>(sql`
-      SELECT count(*)::int AS c FROM dispatches d
-      JOIN feed_items fi ON fi.id = d.feed_item_id
-      WHERE (${status}::text IS NULL OR d.status = ${status}::text)
-        AND (${feedFilter}::uuid IS NULL OR fi.feed_id = ${feedFilter}::uuid)
+    // One pass over dispatches yields BOTH the filtered total ("Showing X
+    // of Y") and the global per-status chip counts — previously two
+    // separate count queries. The feed_items join is a LEFT join on a
+    // single-valued FK, so it can't duplicate rows or skew the globals.
+    withUser(session.uid, (tx) => tx.execute<{
+      filtered_total: number
+      pending: number; sent: number; failed: number; skipped: number
+    }>(sql`
+      SELECT
+        count(*) FILTER (
+          WHERE (${status}::text IS NULL OR d.status = ${status}::text)
+            AND (${feedFilter}::uuid IS NULL OR fi.feed_id = ${feedFilter}::uuid)
+        )::int AS filtered_total,
+        count(*) FILTER (WHERE d.status = 'pending')::int AS pending,
+        count(*) FILTER (WHERE d.status = 'sent')::int    AS sent,
+        count(*) FILTER (WHERE d.status = 'failed')::int  AS failed,
+        count(*) FILTER (WHERE d.status = 'skipped')::int AS skipped
+      FROM dispatches d
+      LEFT JOIN feed_items fi ON fi.id = d.feed_item_id
     `)),
     withUser(session.uid, (tx) => tx.execute<{ id: string; label: string }>(sql`
       SELECT id, label FROM feeds ORDER BY label
-    `)),
-    withUser(session.uid, (tx) => tx.execute<{ status: string; c: number }>(sql`
-      SELECT status, count(*)::int AS c FROM dispatches GROUP BY status
     `)),
     withUser(session.uid, (tx) => tx.execute<{
       id: string; label: string; url: string
@@ -81,10 +92,15 @@ export default async function ActivityPage({
       ORDER BY consecutive_failures DESC
     `)),
   ])
-  const total = totalRows[0]?.c ?? 0
-
-  const countMap = Object.fromEntries(counts.map((c) => [c.status, c.c])) as Record<string, number>
-  const allCount = (countMap.sent ?? 0) + (countMap.failed ?? 0) + (countMap.pending ?? 0) + (countMap.skipped ?? 0)
+  const countRow = countRows[0]
+  const total = countRow?.filtered_total ?? 0
+  const countMap: Record<string, number> = {
+    pending: countRow?.pending ?? 0,
+    sent: countRow?.sent ?? 0,
+    failed: countRow?.failed ?? 0,
+    skipped: countRow?.skipped ?? 0,
+  }
+  const allCount = countMap.pending + countMap.sent + countMap.failed + countMap.skipped
 
   return (
     <div className="space-y-6">

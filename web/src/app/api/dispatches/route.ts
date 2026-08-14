@@ -44,6 +44,7 @@ export const GET = withAuth(async (req, { session }) => {
       item_published_at: Date | null
       sink_type: string; sink_id: string; destination: string | null
       sink_label: string | null
+      total_count: number
     }>(sql`
       SELECT d.id, d.status, d.attempts, d.scheduled_at, d.dispatched_at,
              d.error, d.provider_message_id, d.created_at,
@@ -51,7 +52,8 @@ export const GET = withAuth(async (req, { session }) => {
              f.id AS feed_id, f.label AS feed_label,
              fi.title AS item_title, fi.link AS item_link, fi.published_at AS item_published_at,
              rd.sink_type, rd.sink_id, rd.destination,
-             COALESCE(ssm.label, sre.label, snt.label, sdw.label) AS sink_label
+             COALESCE(ssm.label, sre.label, snt.label, sdw.label) AS sink_label,
+             count(*) OVER ()::int AS total_count
       FROM dispatches d
       JOIN route_destinations rd ON rd.id = d.route_destination_id
       JOIN routes r ON r.id = d.route_id
@@ -67,13 +69,29 @@ export const GET = withAuth(async (req, { session }) => {
       ORDER BY d.created_at DESC
       LIMIT ${limit} OFFSET ${offset}
     `)
-    const total = await tx.execute<{ c: number }>(sql`
-      SELECT count(*)::int AS c FROM dispatches d
-      JOIN feed_items fi ON fi.id = d.feed_item_id
-      WHERE (${status ?? null}::text IS NULL OR d.status = ${status ?? null}::text)
-        AND (${feed_id ?? null}::uuid IS NULL OR fi.feed_id = ${feed_id ?? null}::uuid)
-        AND (${route_id ?? null}::uuid IS NULL OR d.route_id = ${route_id ?? null}::uuid)
-    `)
-    return NextResponse.json({ dispatches: rows, total: total[0]?.c ?? 0 })
+
+    // count(*) OVER () rides along on the list query, saving the separate
+    // count round-trip in the common case. When zero rows return the
+    // window total is unavailable: at offset 0 that simply means zero
+    // matches (no extra query), past the end fall back to a real count.
+    let total: number
+    if (rows.length > 0) {
+      total = rows[0].total_count
+    } else if (offset === 0) {
+      total = 0
+    } else {
+      const t = await tx.execute<{ c: number }>(sql`
+        SELECT count(*)::int AS c FROM dispatches d
+        JOIN feed_items fi ON fi.id = d.feed_item_id
+        WHERE (${status ?? null}::text IS NULL OR d.status = ${status ?? null}::text)
+          AND (${feed_id ?? null}::uuid IS NULL OR fi.feed_id = ${feed_id ?? null}::uuid)
+          AND (${route_id ?? null}::uuid IS NULL OR d.route_id = ${route_id ?? null}::uuid)
+      `)
+      total = t[0]?.c ?? 0
+    }
+
+    // Strip the window column so the response JSON shape is unchanged.
+    const dispatches = rows.map(({ total_count: _totalCount, ...rest }) => rest)
+    return NextResponse.json({ dispatches, total })
   })
 })
