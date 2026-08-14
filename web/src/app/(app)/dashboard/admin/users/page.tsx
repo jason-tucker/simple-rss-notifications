@@ -1,7 +1,7 @@
 import { redirect } from 'next/navigation'
 import { sql } from 'drizzle-orm'
 import { db } from '@/lib/db/client'
-import { readSessionCookie } from '@/lib/auth/session'
+import { getCurrentUser } from '@/lib/auth/currentUser'
 import { AdminUsers, type AdminUser } from '@/components/AdminUsers'
 import { PageHeader } from '@/components/ui'
 
@@ -11,20 +11,14 @@ export const dynamic = 'force-dynamic'
 export const metadata = { title: 'Users' }
 
 export default async function AdminUsersPage() {
-  const session = await readSessionCookie()
-  if (!session) redirect('/login')
-
-  // Owner-level lookup (no withUser) — needs to read this user's flags and,
-  // below, every user row. The admin gate stays here (not in the layout)
-  // because layouts persist across client navigation.
-  const me = await db.execute<{ is_admin: boolean; must_change_password: boolean; password_changed_at: Date }>(sql`
-    SELECT is_admin, must_change_password, password_changed_at FROM users WHERE id = ${session.uid}::uuid LIMIT 1
-  `)
-  const user = me[0]
-  if (!user) redirect('/login')
-  if (Math.floor(new Date(user.password_changed_at).getTime() / 1000) > session.iat) redirect('/login')
-  if (user.must_change_password) redirect('/account/password')
-  if (!user.is_admin) redirect('/')
+  // React-cache()d — shares the layout's lookup within this request. The
+  // admin gate stays here (not in the layout) because layouts persist
+  // across client navigation.
+  const current = await getCurrentUser()
+  if (!current) redirect('/login')
+  if (current.user.must_change_password) redirect('/account/password')
+  if (!current.user.is_admin) redirect('/')
+  const session = current.session
 
   const rows = await db.execute<{
     id: string

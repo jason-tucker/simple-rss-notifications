@@ -1,8 +1,6 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
-import { sql } from 'drizzle-orm'
-import { db } from '@/lib/db/client'
-import { readSessionCookie } from '@/lib/auth/session'
+import { getCurrentUser } from '@/lib/auth/currentUser'
 import { Brand } from '@/components/Brand'
 import { Nav } from '@/components/Nav'
 import { LogoutButton } from '@/components/LogoutButton'
@@ -16,23 +14,14 @@ export const dynamic = 'force-dynamic'
  * forced password change) once for the whole group. Note layouts persist
  * across client-side navigation, so these checks are a UX gate — the real
  * security boundary stays in withAuth() on the API routes.
+ *
+ * getCurrentUser() is React-cache()d, so pages rendering in the same
+ * request (e.g. the admin gate) reuse this lookup instead of re-querying.
  */
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const session = await readSessionCookie()
-  if (!session) redirect('/login')
-
-  const rows = await db.execute<{
-    username: string
-    is_admin: boolean
-    must_change_password: boolean
-    password_changed_at: Date
-  }>(sql`
-    SELECT username, is_admin, must_change_password, password_changed_at
-    FROM users WHERE id = ${session.uid}::uuid LIMIT 1
-  `)
-  const user = rows[0]
-  if (!user) redirect('/login')
-  if (Math.floor(new Date(user.password_changed_at).getTime() / 1000) > session.iat) redirect('/login')
+  const current = await getCurrentUser()
+  if (!current) redirect('/login')
+  const { user } = current
   if (user.must_change_password) redirect('/account/password')
 
   return (

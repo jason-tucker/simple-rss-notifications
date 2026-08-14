@@ -5,6 +5,85 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.17.0] — 2026-08-14 — Performance & reliability pass
+
+A full audit of the worker pipeline, database layer, and web queries.
+No behavioural changes to what gets sent or shown — the same notifications
+deliver, just faster and more reliably. Migration 0012 is additive-only
+(two indexes); no data is modified.
+
+### Worker — throughput
+- **Dispatcher batches**: up to 5 due dispatches are claimed atomically per
+  loop tick and sent **concurrently** (was one per ~5 s tick ⇒ ~12/min
+  ceiling), with per-dispatch error isolation — one slow/dead sink no longer
+  blocks the queue behind it. Sink rows for a batch load with one query per
+  sink *type* instead of one per dispatch (kills the N+1).
+- **Feed polling batches**: up to 4 due feeds fetch concurrently (was one
+  per tick — a single 20 s-timeout feed starved every feed behind it).
+  Per-feed failures record on that feed row only; an unexpected mid-poll
+  throw now also stamps `last_polled_at`, fixing a latent hot-repick loop.
+- **Pooled SMTP transports** (`lib/email/smtpPool.ts`): sends reuse a pooled
+  nodemailer connection per sink instead of a fresh TCP+TLS+EHLO+AUTH
+  handshake per email. Fingerprinted on host/port/user/TLS + password
+  *ciphertext*, so editing or rotating credentials in the UI swaps in a new
+  transport immediately (no restarts, per CLAUDE.md §10); connection-level
+  errors evict the pooled transport; idle transports close after 5 min.
+
+### Worker — reliability (fixes)
+- **HTTP 429 was permanently failing dispatches**: `ntfy-http-429`,
+  `discord-http-429`, and `resend-http-429` all matched the `*-http-4`
+  "permanent" prefix, so a provider briefly rate-limiting us **silently
+  dropped the notification**. 429 is now transient: the retry is scheduled
+  at `max(exponential backoff, provider's Retry-After / X-RateLimit-Reset-After
+  hint)`, capped at 1 h (`lib/retry.ts`, unit-tested).
+- Non-429 4xx classification is now a generic suffix rule, so future sink
+  types inherit correct permanent/transient behaviour automatically.
+- **Per-destination ordering preserved**: concurrent sends are grouped so
+  one channel/mailbox/topic still receives its messages oldest-first, like
+  the old serial dispatcher; only different destinations run in parallel.
+- **Poll persist is transactional**: item insert → dispatch fan-out → feed
+  state now commit atomically, closing a window where a mid-poll failure
+  committed feed_items without dispatches — permanently suppressing those
+  notifications via the dedupe constraint on the next poll.
+
+### Database — hygiene & indexes
+- **New hourly maintenance job** (`worker/maintenance.ts`): purges
+  `web_sessions` rows past `expires_at` and `rate_limit_buckets` older than
+  1 day (longest live window is 1 h). Both tables previously grew
+  **unbounded** — nothing ever deleted expired sessions or stale buckets.
+  Deletes only ephemeral, dead-by-definition rows; verified in e2e that live
+  sessions/buckets survive.
+- **Migration 0012** (additive): partial index `feeds_failing_idx` on
+  `feeds(consecutive_failures) WHERE > 0` (Activity's failing-feeds banner
+  was a seq scan) and `rate_limit_buckets_window_idx` for the cleanup sweep.
+  Verified applying cleanly on both a fresh DB and an upgrade from 0011.
+
+### Web — fewer queries per request
+- `getCurrentUser()` (`lib/auth/currentUser.ts`, React `cache()`): the
+  `(app)` layout and admin page now share one `users` lookup per request
+  instead of duplicating the query + session sanity checks.
+- Activity page: filtered total + per-status chip counts come from **one**
+  `FILTER`-aggregate pass over `dispatches` (was two count queries; 5
+  parallel queries → 4). Rendered values are identical.
+- `GET /api/dispatches`: `total` rides along as `count(*) OVER ()` on the
+  list query — the separate count query now runs only when paging past the
+  end. Response shape unchanged.
+
+### Verification
+- `pnpm typecheck`, `pnpm build`, `pnpm test` (24/24, incl. new retry +
+  SMTP-pool suites) all green.
+- Full local e2e: fresh Postgres 16 + migration upgrade path, worker
+  bootstrap, real login + forced password change, sinks/feeds/routes created
+  through the live APIs, 3 feeds polled in parallel (one deliberately 404ing
+  — isolated correctly), real ntfy pushes delivered (`sent`), dead Discord
+  webhook failed permanently after one attempt, maintenance sweep deleted
+  exactly the seeded expired rows, and all count surfaces cross-checked
+  against psql ground truth.
+
+### Notes
+- No demo site exists in this repo (audited); Caddy/Docker/CI caching was
+  audited and already optimal — no infra changes needed.
+
 ## [0.16.2] — 2026-07-06
 
 ### Docs

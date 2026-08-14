@@ -1,8 +1,10 @@
 import 'server-only'
-import nodemailer from 'nodemailer'
+import nodemailer, { type Transporter } from 'nodemailer'
 import type { SinkSmtp, SinkResend } from '@/lib/db/schema'
 import { decrypt } from '@/lib/crypto/aead'
 import { isPrivateHost, readCappedText } from '@/lib/ssrf'
+import { retryAfterHintSec } from '@/lib/retry'
+import { KeyedTransportCache, connectionFingerprint } from './smtpPool'
 
 const MAX_ERROR_BODY_BYTES = 8 * 1024
 
@@ -55,6 +57,12 @@ export interface SendResult {
   providerMessageId?: string
   error?: string
   code?: string
+  /**
+   * Server-provided rate-limit hint (seconds), parsed from Retry-After /
+   * X-RateLimit-Reset-After on 429 responses. The dispatcher uses it to
+   * schedule the retry no sooner than the provider asked.
+   */
+  retryAfterSec?: number
 }
 
 function decryptSinkSecret(
@@ -99,16 +107,7 @@ export async function sendViaSmtp(sink: SinkSmtp, args: SendArgs): Promise<SendR
     return { ok: false, error: 'SMTP host could not be validated', code: 'ssrf-blocked' }
   }
 
-  const transport = nodemailer.createTransport({
-    host: sink.host,
-    port: sink.port,
-    secure: sink.port === 465, // implicit TLS on 465; STARTTLS otherwise
-    requireTLS: sink.use_tls,
-    auth: { user: sink.username, pass: password },
-    connectionTimeout: 10_000,
-    greetingTimeout: 10_000,
-    socketTimeout: 20_000,
-  })
+  const transport = getSmtpTransport(sink, password)
 
   const fromHeader = sink.from_name ? `"${sink.from_name}" <${sink.from_email}>` : sink.from_email
 
@@ -130,14 +129,62 @@ export async function sendViaSmtp(sink: SinkSmtp, args: SendArgs): Promise<SendR
     // Kill the port-scan oracle: connection-level failures all collapse to a
     // single generic message so the caller can't distinguish refused vs.
     // timed-out vs. unknown-host. The detailed code/message stays server-side.
-    if (SMTP_CONNECTION_ERROR_CODES.has(code)) {
+    // "pool was closed" is a batch-mate casualty: another send on this sink
+    // hit a connection error and evicted the shared pooled transport, which
+    // fails queued sends with a code-less Error — same generic + retryable
+    // treatment.
+    if (SMTP_CONNECTION_ERROR_CODES.has(code) || /pool was closed/i.test(message)) {
       console.error('[email] SMTP connection error', { host: sink.host, port: sink.port, code, message })
+      // Evict the pooled transport so the next attempt starts from a
+      // fresh connection instead of a broken pooled socket.
+      smtpTransports.drop(sink.id)
       return { ok: false, error: GENERIC_SMTP_CONNECTION_ERROR, code: 'smtp-connection' }
     }
     return { ok: false, error: message, code }
-  } finally {
-    transport.close()
   }
+}
+
+// Pooled transports, one per SMTP sink, reused across sends so each email
+// doesn't pay a fresh TCP + TLS + EHLO + AUTH handshake. Keyed by sink id;
+// fingerprinted on connection identity incl. the password CIPHERTEXT (so a
+// credential rotation/edit swaps in a fresh transport, and no plaintext
+// secret sits in the key). Idle transports close after 5 min via lazy sweep.
+// Note the pooled transport itself necessarily holds the auth config in
+// memory — same lifetime as a send, just reused; the worker holds the
+// decryption key anyway.
+const SMTP_POOL_IDLE_MS = 5 * 60_000
+const smtpTransports = new KeyedTransportCache<Transporter>((t) => t.close(), SMTP_POOL_IDLE_MS)
+// The cache sweeps lazily on access; this unref'd interval covers the
+// "traffic stopped" case so the last transport's sockets don't stay open
+// forever waiting for a next send that never comes.
+setInterval(() => smtpTransports.sweep(), 60_000).unref()
+
+function getSmtpTransport(sink: SinkSmtp, password: string): Transporter {
+  const fingerprint = connectionFingerprint([
+    sink.host,
+    sink.port,
+    sink.username,
+    sink.use_tls,
+    sink.password_key_version,
+    (sink.password_ciphertext as Buffer | null)?.toString('base64') ?? '',
+  ])
+  const cached = smtpTransports.get(sink.id, fingerprint)
+  if (cached) return cached
+  const transport = nodemailer.createTransport({
+    pool: true,
+    maxConnections: 2,
+    maxMessages: 100,
+    host: sink.host,
+    port: sink.port,
+    secure: sink.port === 465, // implicit TLS on 465; STARTTLS otherwise
+    requireTLS: sink.use_tls,
+    auth: { user: sink.username, pass: password },
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
+  })
+  smtpTransports.set(sink.id, fingerprint, transport)
+  return transport
 }
 
 const RESEND_URL = 'https://api.resend.com/emails'
@@ -190,7 +237,12 @@ export async function sendViaResend(sink: SinkResend, args: SendArgs): Promise<S
     })
     if (!res.ok) {
       const text = await readCappedResponseText(res).catch(() => '')
-      return { ok: false, error: text.slice(0, 500), code: `resend-http-${res.status}` }
+      return {
+        ok: false,
+        error: text.slice(0, 500),
+        code: `resend-http-${res.status}`,
+        retryAfterSec: retryAfterHintSec(res.headers, res.status),
+      }
     }
     const text = await readCappedResponseText(res).catch(() => '')
     let id: string | undefined
