@@ -3,6 +3,7 @@ import type { SinkDiscordWebhook } from '@/lib/db/schema'
 import { decrypt } from '@/lib/crypto/aead'
 import { safeFetch, SsrfBlockedError, readCappedText } from '@/lib/ssrf'
 import type { SendResult } from '@/lib/email/send'
+import { retryAfterHintSec } from '@/lib/retry'
 
 const DISCORD_TIMEOUT_MS = 15_000
 const MAX_ERROR_BODY_BYTES = 8 * 1024
@@ -40,8 +41,8 @@ export interface DiscordPublishArgs {
  *   - use_embeds=false: plain `content` text (max 2000 chars)
  *
  * Discord rate-limits webhook requests (~30/min per channel). We don't
- * pre-throttle here — the dispatcher's MAX_ATTEMPTS + exp backoff will
- * absorb the occasional 429.
+ * pre-throttle here — the dispatcher retries 429s with the server's
+ * Retry-After hint (see lib/retry.ts).
  */
 export async function publishToDiscord(sink: SinkDiscordWebhook, args: DiscordPublishArgs): Promise<SendResult> {
   if (sink.incomplete) {
@@ -105,6 +106,7 @@ export async function publishToDiscord(sink: SinkDiscordWebhook, args: DiscordPu
         ok: false,
         error: text.slice(0, 500) || `HTTP ${res.status}`,
         code: `discord-http-${res.status}`,
+        retryAfterSec: retryAfterHintSec(res.headers, res.status),
       }
     }
 

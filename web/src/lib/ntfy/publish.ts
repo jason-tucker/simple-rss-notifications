@@ -3,6 +3,7 @@ import type { SinkNtfy } from '@/lib/db/schema'
 import { decrypt } from '@/lib/crypto/aead'
 import { safeFetch, SsrfBlockedError, readCappedText } from '@/lib/ssrf'
 import type { SendResult } from '@/lib/email/send'
+import { retryAfterHintSec } from '@/lib/retry'
 
 const NTFY_TIMEOUT_MS = 15_000
 const MAX_ERROR_BODY_BYTES = 8 * 1024
@@ -97,6 +98,7 @@ export async function publishToNtfy(sink: SinkNtfy, args: NtfyPublishArgs): Prom
         ok: false,
         error: text.slice(0, 500) || `HTTP ${res.status}`,
         code: `ntfy-http-${res.status}`,
+        retryAfterSec: retryAfterHintSec(res.headers, res.status),
       }
     }
 
