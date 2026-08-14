@@ -26,8 +26,9 @@ import { BUILD_VERSION, GIT_SHA } from '@/lib/version'
 import { db, pg } from '@/lib/db/client'
 import { runMigrations } from '@/lib/db/migrate'
 import { bootstrap } from './bootstrap'
-import { pollOneDueFeed } from './rssPoller'
-import { dispatchOnePending } from './dispatcher'
+import { pollDueFeeds } from './rssPoller'
+import { dispatchPending } from './dispatcher'
+import { runMaintenance, MAINTENANCE_INTERVAL_MS } from './maintenance'
 import { startNotifySubscriber, sleepUntilKickOrMs, type NotifySubscriber } from './notify'
 
 const HEARTBEAT_INTERVAL_MS = 30_000
@@ -81,11 +82,26 @@ function startHeartbeat() {
   setTimeout(tick, 0).unref()
 }
 
+function startMaintenance() {
+  // Hourly cleanup of expired/ephemeral rows (dead sessions, stale
+  // rate-limit buckets). Same independent-timer pattern as the heartbeat.
+  // runMaintenance catches internally; the extra try/catch here keeps the
+  // tick chain alive even if that ever changes.
+  const tick = async () => {
+    if (shuttingDown) return
+    try { await runMaintenance(log) } catch (err) {
+      log('maintenance-failed', { err: err instanceof Error ? err.message : String(err) })
+    }
+    setTimeout(tick, MAINTENANCE_INTERVAL_MS).unref()
+  }
+  setTimeout(tick, 0).unref()
+}
+
 async function workLoop(sub: NotifySubscriber) {
   while (!shuttingDown) {
     try {
-      const didPoll = await pollOneDueFeed(log)
-      const didDispatch = await dispatchOnePending(log)
+      const didPoll = await pollDueFeeds(log)
+      const didDispatch = await dispatchPending(log)
       if (!didPoll && !didDispatch) {
         // Sleep up to IDLE_SLEEP_MS — but wake immediately if a NOTIFY
         // arrives (UI added a feed, hit Retry, etc.). Sub-second
@@ -113,6 +129,7 @@ async function main() {
   const sub = await startNotifySubscriber(log)
 
   startHeartbeat()
+  startMaintenance()
   await workLoop(sub)
 }
 
