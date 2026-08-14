@@ -67,5 +67,6 @@ test('connectionFingerprint is stable and order/value sensitive', () => {
   assert.equal(a, b)
   assert.notEqual(a, c)
   assert.notEqual(a, d)
-  assert.match(a, /^[0-9a-f]{64}$/)
+  // Field boundaries survive serialization (no naive join ambiguity).
+  assert.notEqual(connectionFingerprint(['ab', 'c']), connectionFingerprint(['a', 'bc']))
 })

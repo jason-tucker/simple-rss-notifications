@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto'
-
 /**
  * Keyed cache for pooled SMTP transports (or any closable resource).
  *
@@ -66,11 +64,13 @@ export class KeyedTransportCache<T> {
 }
 
 /**
- * Stable fingerprint over connection-identity fields. Callers pass the
- * credential CIPHERTEXT (never plaintext) — it changes on rotation, which
- * is exactly the invalidation signal we need, without holding secret
- * material in the cache key.
+ * Stable fingerprint over connection-identity fields — a plain serialized
+ * string compared for equality, nothing more. Callers pass the credential
+ * CIPHERTEXT (never plaintext): it changes on rotation, which is exactly
+ * the invalidation signal we need, and AES-GCM ciphertext reveals nothing
+ * without the key. Deliberately NOT hashed — this is not password storage
+ * (argon2id owns that), and the string never leaves process memory.
  */
 export function connectionFingerprint(parts: Array<string | number | boolean | null | undefined>): string {
-  return createHash('sha256').update(JSON.stringify(parts)).digest('hex')
+  return JSON.stringify(parts)
 }
