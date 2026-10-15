@@ -76,7 +76,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build + push web image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./web
           push: true
@@ -92,7 +92,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build + push caddy image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
