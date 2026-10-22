@@ -5,6 +5,11 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.17.1] — 2026-10-22 — Project-manager skill
+
+### Added
+- **Added `/project-manager` Claude Code skill** (`.claude/skills/project-manager/SKILL.md`). Delegates all requested work to agents with written prompts: Opus for planning, Sonnet for coding, Haiku for lookups and low-level tasks. Tooling only; no runtime change.
+
 ## [0.17.0] — 2026-08-14 — Performance & reliability pass
 
 A full audit of the worker pipeline, database layer, and web queries.
