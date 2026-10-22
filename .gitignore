@@ -28,7 +28,8 @@ Thumbs.db
 *.swp
 
 # Claude Code agent worktrees / scratch
-.claude/
+.claude/*
+!.claude/skills/
 
 # Drizzle generated
 web/drizzle/
