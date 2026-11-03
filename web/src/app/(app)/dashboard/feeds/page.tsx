@@ -15,14 +15,14 @@ export default async function FeedsPage() {
 
   const feeds = await withUser(session.uid, async (tx) => {
     return await tx.execute<{
-      id: string; label: string; url: string; enabled: boolean
+      id: string; kind: string; label: string; url: string | null; enabled: boolean
       poll_interval_s: number
       last_polled_at: Date | null; last_success_at: Date | null
       last_error: string | null; last_error_at: Date | null
       consecutive_failures: number
       backfill_mode: string
     }>(sql`
-      SELECT id, label, url, enabled, poll_interval_s,
+      SELECT id, kind, label, url, enabled, poll_interval_s,
              last_polled_at, last_success_at, last_error, last_error_at,
              consecutive_failures, backfill_mode
       FROM feeds ORDER BY created_at
@@ -33,7 +33,7 @@ export default async function FeedsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Feeds"
-        description="The RSS sources being watched. Connect a feed to a sink with a route to actually get notified."
+        description="The RSS sources being watched and the webhooks that push to you. Connect a feed to a sink with a route to actually get notified."
         action={<ButtonLink variant="primary" size="sm" href="/dashboard/feeds/new">+ Add feed</ButtonLink>}
       />
       {feeds.length === 0 ? (
@@ -46,7 +46,7 @@ export default async function FeedsPage() {
         <div className="space-y-2">
           {feeds.map((f) => (
             <FeedRow key={f.id} feed={{
-              id: f.id, label: f.label, url: f.url, enabled: f.enabled,
+              id: f.id, kind: f.kind, label: f.label, url: f.url, enabled: f.enabled,
               poll_interval_s: f.poll_interval_s,
               last_polled_at: f.last_polled_at ? new Date(f.last_polled_at).toISOString() : null,
               last_success_at: f.last_success_at ? new Date(f.last_success_at).toISOString() : null,

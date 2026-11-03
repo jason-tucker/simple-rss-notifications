@@ -34,7 +34,7 @@ export async function pollDueFeeds(log: Logger): Promise<boolean> {
     SELECT id, user_id, url, label, poll_interval_s, etag, last_modified,
            backfill_mode, backfill_value, backfill_pace_seconds
     FROM feeds
-    WHERE enabled
+    WHERE enabled AND kind = 'rss'
       AND (last_polled_at IS NULL
            OR last_polled_at < now() - (poll_interval_s::int * interval '1 second'))
     ORDER BY last_polled_at ASC NULLS FIRST
@@ -188,6 +188,22 @@ async function pollFeed(feed: FeedRow, log: Logger): Promise<void> {
           `)
         }
       }
+    }
+
+    // Tell SSE listeners about the items that were actually dispatched
+    // (not silently-recorded first-poll history). Delivered on commit.
+    if (itemsToDispatch.length > 0) {
+      // user_id lets web subscribers drop other users' events before
+      // querying; they still re-read the row through RLS. Sorted by id:
+      // rows from one transaction share fetched_at, so the stream cursor
+      // (fetched_at, id) orders them by id, and emit order must match it.
+      const notifs = itemsToDispatch.slice().sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).map((it) =>
+        sql`(${JSON.stringify({ id: it.id, feed_id: feed.id, user_id: feed.user_id })})`,
+      )
+      await tx.execute(sql`
+        SELECT pg_notify('items_inserted', v.payload)
+        FROM (VALUES ${sql.join(notifs, sql`, `)}) AS v(payload)
+      `)
     }
 
     // Mark feed polled. If this was the first poll, transition backfill_mode
