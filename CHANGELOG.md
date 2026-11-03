@@ -5,6 +5,26 @@ versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Pre-1.0 minor bumps land per merged PR; patch bumps for fix-only PRs.
 
+## [0.18.0] — 2026-11-02 — Webhook feeds and read API
+
+### Added
+- **Webhook feeds**: a new feed kind (`feeds.kind` = `rss` | `webhook`) with no URL, skipped by the RSS poller, fed by the public `POST`/`PUT /api/hooks/<token>` endpoint. The token is 256-bit random; only its SHA-256 is stored. The UI shows the full URL once on creation and offers "Regenerate token" (`POST /api/feeds/:id/regenerate-token`).
+- **Payload normalizer** (`web/src/lib/hooks/normalize.ts`) for Discord-compatible, generic JSON, ntfy-style (headers / `?title=&priority=`) and plain-text bodies; priority 1–5, color as `#rrggbb`, `@everyone`/`@here` bump Discord payloads to priority 4. 64 KB body limit, in-memory per-feed / per-user / per-IP rate limits, token never logged, Discord-style `204` / `200` (`?wait=true`) responses.
+- **Read API**: `GET /api/items` (newest-first, `feeds`/`since`/`limit` filters) and `GET /api/items/stream` (SSE, `LISTEN items_inserted`, 15 s heartbeat, `Last-Event-ID` replay). RSS items are included (priority 3) and are also announced on `items_inserted`.
+- Migration `0013_webhook_feeds`: `feeds.kind`, `feeds.token_hash` (partial unique index), `feeds.url` now nullable; `feed_items.priority`, `color`, `source`, `raw`.
+- Unit tests for the normalizer, body-size limit, webhook rate limiter and request handler, the `items_inserted` listener hub, the Discord request body and the middleware public-path match.
+
+### Security / hardening
+- **Webhook rate limits are in-memory and per process** (`web/src/lib/hooks/rateLimit.ts`), a deliberate deviation from the Postgres-backed `rateLimit()` (CLAUDE.md rule 11) so unauthenticated traffic never writes to the database; they reset on restart. Per-IP bad-token budget (30/min) reserves a slot before any token parsing or DB lookup (refunded when the token is valid), so concurrent requests cannot overshoot it, and a process-wide budget caps unknown-token lookups at 600/min across all IPs; per-feed (60/min, keyed by feed id after lookup) and per-user (120/min across all of a user's hooks) buckets live in a separate store, so floods of junk keys cannot evict them; eviction is oldest-first instead of a full clear.
+- **SSE streams are capped at 30 minutes** and re-check the session (revoked, expired, password changed) every 60 s; clients reconnect with `Last-Event-ID`. Streams are aborted (queue dropped) on backpressure, close when an item re-read fails, replay from their last emitted id (or from connect time if that item is gone) after every listener (re)`LISTEN`, close when the `LISTEN` fails, de-duplicate replayed vs. live items, and skip other users' `items_inserted` events (payload now carries `user_id`) before the RLS re-read. Because postgres-js silently gives up if its own re-`LISTEN` after a dropped connection fails, the listener pings itself (`pg_notify` with a per-connection nonce) every 30 s and replaces the connection when no ping has come back for 75 s; streams then replay (new `LISTEN` succeeded) or close (it failed). RSS items are announced in id order within a poll, matching the replay cursor.
+- Normalizer: exceptions return 400; JSON nested deeper than 32 levels is stored as clipped text; `raw` is stripped of `\u0000` and lone surrogates and keeps a `__proto__` key as plain data; dates outside years 1–9999 are dropped and far-future dates clamped to now; URLs are parsed with `new URL()`, http(s) only, no control characters or whitespace, stored normalized.
+- Discord deliveries always send `allowed_mentions: { parse: [] }`, so item text can never ping `@everyone`/`@here`/roles/users.
+
+### Changed
+- `middleware.ts` treats only `/api/hooks/<token-shaped segment>` as public. `Caddyfile` no longer compresses/buffers `/api/items/stream` (`flush_interval -1`).
+- Webhook items fan out to routes/destinations exactly like RSS items (dispatch rows are created in the ingest transaction and `dispatches_changed` wakes the worker).
+- Discord deliveries now always send `allowed_mentions: { parse: [] }`, so **existing RSS → Discord routes no longer ping `@everyone`/`@here`** (or roles/users) when an item's text contains them; the mention text still appears, it just doesn't notify.
+
 ## [0.17.1] — 2026-10-22 — Project-manager skill
 
 ### Added
