@@ -12,8 +12,6 @@
 }
 
 :{$PORT:6082} {
-  encode gzip zstd
-
   # Next.js fingerprints filenames under /_next/static (e.g. .../[hash].js),
   # so the contents at a given URL never change. Tell the browser to cache
   # forever — saves a re-download on every page load.
@@ -36,9 +34,26 @@
     }
   }
 
-  reverse_proxy {$NEXT_HOST:next-srn}:3000 {
-    fail_duration 5s
-    max_fails 2
-    lb_try_duration 2s
+  # Server-Sent Events (GET /api/items/stream): must not be compressed or
+  # buffered, or events sit in a proxy buffer until it fills. `encode` is
+  # deliberately NOT applied on this path, and flush_interval -1 flushes
+  # every write to the client immediately.
+  @sse path /api/items/stream
+  handle @sse {
+    reverse_proxy {$NEXT_HOST:next-srn}:3000 {
+      flush_interval -1
+      fail_duration 5s
+      max_fails 2
+      lb_try_duration 2s
+    }
+  }
+
+  handle {
+    encode gzip zstd
+    reverse_proxy {$NEXT_HOST:next-srn}:3000 {
+      fail_duration 5s
+      max_fails 2
+      lb_try_duration 2s
+    }
   }
 }

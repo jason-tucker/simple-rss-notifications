@@ -29,6 +29,40 @@ export interface DiscordPublishArgs {
 }
 
 /**
+ * JSON body for the Discord webhook POST. Always sets
+ * `allowed_mentions: { parse: [] }`: item text comes from third parties (RSS
+ * feeds, public webhook senders), so `@everyone`, `@here`, role and user
+ * mentions in it must never ping anyone, in either embed or content mode.
+ */
+export function buildDiscordBody(
+  sink: Pick<SinkDiscordWebhook, 'username' | 'avatar_url' | 'use_embeds'>,
+  args: DiscordPublishArgs,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = { allowed_mentions: { parse: [] } }
+  if (sink.username) body.username = sink.username
+  if (sink.avatar_url) body.avatar_url = sink.avatar_url
+
+  if (sink.use_embeds) {
+    // Caller-provided rich embed wins (dispatcher passes one assembled
+    // from the feed item). Otherwise fall back to the minimal shape.
+    if (args.embed) {
+      body.embeds = [args.embed]
+    } else {
+      const embed: Record<string, unknown> = {
+        title: (args.title ?? 'Notification').slice(0, 256),
+        description: args.message.slice(0, 4000),
+      }
+      if (args.link) embed.url = args.link
+      body.embeds = [embed]
+    }
+  } else {
+    const lines = [args.title, args.message, args.link].filter(Boolean) as string[]
+    body.content = lines.join('\n').slice(0, 2000)
+  }
+  return body
+}
+
+/**
  * POST to a Discord webhook URL.
  *
  * Discord doesn't authenticate via header — the secret IS the URL.
@@ -70,27 +104,7 @@ export async function publishToDiscord(sink: SinkDiscordWebhook, args: DiscordPu
   // posted message JSON so we can capture the message id for audit.
   const finalUrl = url.includes('?') ? `${url}&wait=true` : `${url}?wait=true`
 
-  const body: Record<string, unknown> = {}
-  if (sink.username) body.username = sink.username
-  if (sink.avatar_url) body.avatar_url = sink.avatar_url
-
-  if (sink.use_embeds) {
-    // Caller-provided rich embed wins (dispatcher passes one assembled
-    // from the feed item). Otherwise fall back to the minimal shape.
-    if (args.embed) {
-      body.embeds = [args.embed]
-    } else {
-      const embed: Record<string, unknown> = {
-        title: (args.title ?? 'Notification').slice(0, 256),
-        description: args.message.slice(0, 4000),
-      }
-      if (args.link) embed.url = args.link
-      body.embeds = [embed]
-    }
-  } else {
-    const lines = [args.title, args.message, args.link].filter(Boolean) as string[]
-    body.content = lines.join('\n').slice(0, 2000)
-  }
+  const body = buildDiscordBody(sink, args)
 
   try {
     const res = await safeFetch(finalUrl, {

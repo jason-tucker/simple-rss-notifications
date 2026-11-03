@@ -115,12 +115,50 @@ Deploy-plumbing vars (`WEB_IMAGE`, `CADDY_IMAGE`, `PORT`, `NEXT_HOST`/`NEXT_ALIA
 
 ### Feeds → routes → destinations → sinks
 
-1. **Feed** — an RSS source (label + URL + poll interval + backfill mode). The only inbound source type today.
+1. **Feed** — an RSS source (label + URL + poll interval + backfill mode). Feeds can also be **webhook** feeds (see below).
 2. **Route** — connects a feed to one or more **destinations**.
 3. **Destination** (`route_destinations`) — `(sink_type, sink_id)` plus a per-row `destination` address. Email sinks (SMTP/Resend) require the `destination`; ntfy and `discord_webhook` carry their address on the sink itself. Each destination is independently `enabled`, so you can mute one without deleting it.
 4. **Sink** — the configured channel/credential: `sinks_smtp`, `sinks_resend`, `sinks_ntfy`, `sinks_discord_webhook`. Secrets on sinks are encrypted at rest.
 
 Notification bodies are built per sink type: SMTP/Resend get both plain-text and sanitized HTML, ntfy gets trimmed plain text, Discord gets a rich embed (or markdown when embeds are off). A **"Send latest"** button on each destination previews the exact final rendering using the same builders the dispatcher uses.
+
+### Webhook feeds (push ingest)
+
+Instead of polling a URL, create a feed of type **Webhook (push)** in the UI. The app generates a 256-bit random token and shows the full URL **once**:
+
+```
+https://<your-host>/api/hooks/<token>
+```
+
+Only the SHA-256 of the token is stored (looked up by hash), so a lost URL cannot be recovered — use **Regenerate token** on the feed row to issue a new one (the old URL stops working immediately). Webhook feeds have no URL, are skipped by the RSS poller, and flow through the same routes, destinations and dispatch pipeline as RSS items.
+
+`POST` or `PUT /api/hooks/<token>` is public (no session cookie; the token is the credential). Only a token-shaped path segment (32–128 URL-safe base64 characters) is public: anything else under `/api/hooks/` is treated like any other app path by the middleware (redirect to `/login` without a session cookie). Limits: 64 KB body (413 beyond that); 60 requests/min per feed and 120 requests/min per user across all of that user's hooks (429 + `Retry-After`); 30 unknown/disabled-token requests (404) per minute per IP, after which that IP gets 429 before any token lookup (a slot is reserved before each lookup and handed back when the token is valid, so concurrent requests cannot overshoot it); and a process-wide budget of 600 unknown-token lookups per minute across all IPs (429 for every lookup once spent, until the minute rolls over). These limits are **in-memory, per web process** and reset on restart (a deliberate exception to the Postgres-backed limiter, so unauthenticated traffic cannot write to the database). A body that is not valid JSON is ingested as plain text; an empty payload returns 400. The token is never logged. Responses follow Discord: `204 No Content`, or `200` with `{"id": ..., "title": ..., "content": ...}` when `?wait=true`.
+
+```bash
+# Discord-style payload (embeds, fields, footer, color int)
+curl -X POST "https://<host>/api/hooks/<token>" \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"CI","content":"Deploy finished","embeds":[{"title":"Build #42","description":"All green","url":"https://ci.example.com/42","color":3066993,"fields":[{"name":"Branch","value":"main"}],"footer":{"text":"ci.example.com"}}]}'
+
+# ntfy-style: plain-text body + headers (Title/X-Title, Priority/X-Priority/p, Tags, Click) or ?title=&priority=
+curl -X POST "https://<host>/api/hooks/<token>" \
+  -H 'Title: Backup' -H 'Priority: high' -H 'Tags: floppy_disk' -H 'Click: https://example.com/run/7' \
+  -d 'Nightly backup complete'
+curl -X POST "https://<host>/api/hooks/<token>?title=Disk&priority=urgent" -d 'Disk 95% full'
+
+# Generic JSON: title/subject, message/body/text/description, url/link/click, priority, tags, color
+curl -X PUT "https://<host>/api/hooks/<token>" -H 'Content-Type: application/json' \
+  -d '{"title":"Disk full","message":"95% used","priority":"urgent","tags":["disk"],"color":"#ff8800"}'
+```
+
+Normalization: Discord payloads use the first embed title (else `username`, else the feed name) as the title, and join `content`, embed descriptions, `name: value` field lines and the footer as the body; the first embed color becomes `#rrggbb`. Plain text becomes the body; unrecognised JSON is pretty-printed. **Priority** is 1–5 (default 3) and accepts numbers or `min/low/default/high/urgent/max`; Discord payloads containing `@everyone`/`@here` default to 4 unless a priority is given explicitly. Items are stored in `feed_items` (`priority`, `color`, `source` = `rss|discord|json|text|ntfy`, truncated `raw` jsonb; migration `0013_webhook_feeds`).
+
+### Read API (desktop / API clients)
+
+Authenticate with the normal session: `POST /api/auth/login`, then send the `__Host-session` cookie (and a same-origin `Origin` header on non-GET requests).
+
+- `GET /api/items?feeds=<id,id>&since=<ISO timestamp | item id>&limit=<=500>` — newest first (default limit 100). `since` is exclusive. Returns `[{id, feedId, feedName, title, body, url, priority, color, source, publishedAt, receivedAt}]` for RSS and webhook items alike (RSS items have priority 3; `body` is plain text, max 10,000 chars).
+- `GET /api/items/stream[?feeds=<id,id>]` — Server-Sent Events. Emits `event: item` (`id:` = item id, `data:` = the same JSON shape as above) when a new item arrives, and a `: hb` comment every 15 s. Reconnect with `Last-Event-ID: <item id>` to replay what you missed (up to 500). Max 5 concurrent streams per user. The server re-checks the session every 60 s (logout, revocation, expiry or a password change ends the stream), closes every stream after 30 minutes, aborts a stream whose client stops reading (more than 1 MB queued; queued events are dropped), and closes a stream if an item re-read fails. The server's single `LISTEN items_inserted` connection pings itself every 30 s; if a ping has not come back within 75 s (for example after a dropped database connection that postgres-js failed to re-`LISTEN`), it is replaced, and every open stream replays from its last sent id once the new `LISTEN` succeeds, or is closed if it fails. `EventSource` reconnects automatically with `Last-Event-ID`, so clients should simply reconnect on close. If the `Last-Event-ID` item no longer exists, replay starts from the reconnect time. The Caddyfile skips compression and sets `flush_interval -1` for this path.
 
 ### Dispatch, retry & audit
 
@@ -129,7 +167,7 @@ Notification bodies are built per sink type: SMTP/Resend get both plain-text and
 - **SSRF guard** (`web/src/lib/ssrf.ts`): every user-controlled outbound URL is checked against loopback, link-local, RFC1918 private ranges, IPv4-mapped IPv6, and the `169.254.169.254` cloud-metadata endpoint — including a re-check after DNS resolution to defeat split-horizon DNS.
 - **Postgres Row-Level Security** on every user-data table: each web query runs in a transaction whose first statement is `SET LOCAL app.current_user_id`. The worker connects as a separate Postgres role (the table owner) that bypasses RLS at the GRANT level, not in application code.
 - **Audit log**: every state-changing route calls `writeAudit({ actor, action, target_type, target_id, before, after, via })`. Stored secrets are always substituted with `[REDACTED]` in `before`/`after`.
-- **Rate limiting** is a Postgres sliding-window applied per handler — not a wrapper middleware. The primitives are `rateLimit(key, opts)` and `rateLimitAll(checks)` in `web/src/lib/ratelimit.ts`. Authenticated routes use `withAuth(handler, { rateLimitPerUser, rateLimitPerIp })`, which calls `rateLimit()` internally (defaults 120/min per user, 600/min per IP); sensitive endpoints (login, re-auth, password change, test-send) call `rateLimit()` / `rateLimitAll()` directly with stricter buckets.
+- **Rate limiting** is a Postgres sliding-window applied per handler — not a wrapper middleware. The primitives are `rateLimit(key, opts)` and `rateLimitAll(checks)` in `web/src/lib/ratelimit.ts`. Authenticated routes use `withAuth(handler, { rateLimitPerUser, rateLimitPerIp })`, which calls `rateLimit()` internally (defaults 120/min per user, 600/min per IP); sensitive endpoints (login, re-auth, password change, test-send) call `rateLimit()` / `rateLimitAll()` directly with stricter buckets. The one exception is the public webhook ingest endpoint, which uses an in-memory, per-process limiter (`web/src/lib/hooks/rateLimit.ts`) so that unauthenticated requests never write to Postgres.
 
 ## Deployment
 

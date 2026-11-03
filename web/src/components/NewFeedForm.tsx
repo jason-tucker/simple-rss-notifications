@@ -3,9 +3,12 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button, Card, Field, Input } from '@/components/ui'
+import { HookUrlReveal } from '@/components/HookUrlReveal'
 
 export function NewFeedForm() {
   const router = useRouter()
+  const [kind, setKind] = useState<'rss' | 'webhook'>('rss')
+  const [hookUrl, setHookUrl] = useState<string | null>(null)
   const [label, setLabel] = useState('')
   const [url, setUrl] = useState('')
   const [pollMinutes, setPollMinutes] = useState('15')
@@ -25,18 +28,29 @@ export function NewFeedForm() {
       const res = await fetch('/api/feeds', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          label,
-          url,
-          poll_interval_s: Math.max(60, Number(pollMinutes) * 60),
-          backfill_mode: backfillMode,
-          backfill_value: backfillMode === 'none' ? 0 : Number(backfillValue),
-          backfill_pace_seconds: pacing === 'spaced' ? Math.max(0, Number(paceSeconds)) : 0,
-        }),
+        body: JSON.stringify(
+          kind === 'webhook'
+            ? { kind, label }
+            : {
+                kind,
+                label,
+                url,
+                poll_interval_s: Math.max(60, Number(pollMinutes) * 60),
+                backfill_mode: backfillMode,
+                backfill_value: backfillMode === 'none' ? 0 : Number(backfillValue),
+                backfill_pace_seconds: pacing === 'spaced' ? Math.max(0, Number(paceSeconds)) : 0,
+              },
+        ),
       })
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string }
         setError(body.error ?? `Save failed (${res.status})`)
+        setBusy(false)
+        return
+      }
+      if (kind === 'webhook') {
+        const data = (await res.json()) as { hook_url?: string }
+        setHookUrl(data.hook_url ?? null)
         setBusy(false)
         return
       }
@@ -50,11 +64,35 @@ export function NewFeedForm() {
 
   const smallNumberCls = 'w-16 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-0.5 text-sm disabled:opacity-40'
 
+  function done() {
+    router.replace('/dashboard/feeds')
+    router.refresh()
+  }
+
+  if (hookUrl) return <HookUrlReveal url={hookUrl} onDone={done} />
+
   return (
     <form onSubmit={submit} className="space-y-4">
+      <div role="radiogroup" aria-label="Feed type" className="flex gap-4 text-sm text-zinc-300">
+        <label className="flex items-center gap-2">
+          <input type="radio" name="kind" checked={kind === 'rss'} onChange={() => setKind('rss')} />
+          <span>RSS / Atom feed</span>
+        </label>
+        <label className="flex items-center gap-2">
+          <input type="radio" name="kind" checked={kind === 'webhook'} onChange={() => setKind('webhook')} />
+          <span>Webhook (push)</span>
+        </label>
+      </div>
       <Field label="Name" hint="Anything that helps you recognize it.">
         <Input required maxLength={100} value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. UniFi Security Advisories" />
       </Field>
+      {kind === 'webhook' && (
+        <p className="text-sm text-zinc-400">
+          You get a unique ingest URL after creating it. POST Discord-style JSON, generic JSON, ntfy-style requests or plain text to it.
+        </p>
+      )}
+      {kind === 'rss' && (
+      <>
       <Field label="RSS URL">
         <Input required type="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/feed.xml" />
       </Field>
@@ -99,11 +137,13 @@ export function NewFeedForm() {
           </div>
         )}
       </Card>
+      </>
+      )}
 
       {error && <p className="text-sm text-red-400">{error}</p>}
 
       <Button type="submit" variant="primary" disabled={busy}>
-        {busy ? 'Saving…' : 'Add feed'}
+        {busy ? 'Saving…' : kind === 'webhook' ? 'Create webhook' : 'Add feed'}
       </Button>
     </form>
   )

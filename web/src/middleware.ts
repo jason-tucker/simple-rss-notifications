@@ -28,6 +28,13 @@ const PUBLIC_PREFIXES = [
 ]
 
 /**
+ * Public webhook ingest: the unguessable token in the path is the
+ * credential. Only exactly /api/hooks/<token-shaped segment> is public (same
+ * shape as lib/hooks/token.ts looksLikeToken); nothing deeper or broader.
+ */
+const PUBLIC_HOOK_RE = /^\/api\/hooks\/[A-Za-z0-9_-]{32,128}$/
+
+/**
  * Anything matching a static-asset extension is treated as public. This
  * is what lets `/logo.png` load on `/login` (otherwise middleware
  * bounces it to /login itself, and the Next image optimizer returns 400
@@ -38,6 +45,9 @@ const STATIC_ASSET_RE = /\.(png|jpe?g|svg|gif|ico|webp|avif|css|js|map|woff2?|tt
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
   if (PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + '/'))) {
+    return NextResponse.next()
+  }
+  if (PUBLIC_HOOK_RE.test(pathname)) {
     return NextResponse.next()
   }
   if (STATIC_ASSET_RE.test(pathname)) {

@@ -1,4 +1,4 @@
-import { pgTable, uuid, text, integer, boolean, timestamp, index, uniqueIndex } from 'drizzle-orm/pg-core'
+import { pgTable, uuid, text, integer, smallint, boolean, timestamp, jsonb, index, uniqueIndex } from 'drizzle-orm/pg-core'
 import { users } from './users'
 
 /**
@@ -26,7 +26,12 @@ export const feeds = pgTable(
     id: uuid('id').primaryKey().defaultRandom(),
     user_id: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     label: text('label').notNull(),
-    url: text('url').notNull(),
+    /** 'rss' (polled) | 'webhook' (pushed via /api/hooks/<token>). */
+    kind: text('kind').notNull().default('rss'),
+    /** NULL for webhook feeds (enforced by feeds_kind_url_check). */
+    url: text('url'),
+    /** sha256 hex of the webhook ingest token. The token itself is never stored. */
+    token_hash: text('token_hash'),
     enabled: boolean('enabled').notNull().default(true),
     /** Poll interval in seconds. Default 15 min; floor 60 s in API validation. */
     poll_interval_s: integer('poll_interval_s').notNull().default(900),
@@ -73,6 +78,14 @@ export const feed_items = pgTable(
     /** From the feed's <pubDate> / <updated> when available. */
     published_at: timestamp('published_at', { withTimezone: true }),
     fetched_at: timestamp('fetched_at', { withTimezone: true }).notNull().defaultNow(),
+    /** 1 (min) .. 5 (max); 3 = default. */
+    priority: smallint('priority').notNull().default(3),
+    /** '#rrggbb' or null. */
+    color: text('color'),
+    /** 'rss' | 'discord' | 'json' | 'text' | 'ntfy'. */
+    source: text('source').notNull().default('rss'),
+    /** Truncated original webhook payload (webhook items only). */
+    raw: jsonb('raw'),
   },
   (t) => ({
     // One row per (feed, guid) — the actual dedup primitive.

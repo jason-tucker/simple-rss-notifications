@@ -36,7 +36,7 @@ export const PATCH = withAuth(async (req, { session, ip }, route) => {
     const rows = await tx.execute<{ id: string }>(sql`
       UPDATE feeds SET
         label           = COALESCE(${parsed.data.label ?? null},            label),
-        url             = COALESCE(${parsed.data.url ?? null},              url),
+        url             = CASE WHEN kind = 'rss' THEN COALESCE(${parsed.data.url ?? null}, url) ELSE url END,
         enabled         = COALESCE(${parsed.data.enabled ?? null},          enabled),
         poll_interval_s = COALESCE(${parsed.data.poll_interval_s ?? null},  poll_interval_s),
         -- Resetting URL clears the HTTP cache hints so the next poll starts fresh.

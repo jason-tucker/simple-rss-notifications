@@ -55,6 +55,37 @@ type Handler = (
   route: RouteCtx,
 ) => Promise<Response> | Response
 
+export type SessionCheck =
+  | { ok: true }
+  | { ok: false; code: 'user-missing' | 'password-changed' | 'session-revoked' }
+
+/**
+ * Steps 2+3 below as a reusable check: the user still exists, the password
+ * has not changed since the JWT was issued, and the server-side session row
+ * is neither revoked nor expired. Long-lived responses (the SSE stream)
+ * call this periodically so a logout/revocation also ends them.
+ */
+export async function checkSessionLive(session: Session): Promise<SessionCheck> {
+  const userRows = await db.execute<{ password_changed_at: Date; username: string }>(sql`
+    SELECT password_changed_at, username FROM users WHERE id = ${session.uid}::uuid LIMIT 1
+  `)
+  const userRow = userRows[0]
+  if (!userRow) return { ok: false, code: 'user-missing' }
+  if (Math.floor(new Date(userRow.password_changed_at).getTime() / 1000) > session.iat) {
+    return { ok: false, code: 'password-changed' }
+  }
+
+  const sessRows = await db.execute<{ revoked_at: Date | null; expires_at: Date }>(sql`
+    SELECT revoked_at, expires_at FROM web_sessions WHERE jti = ${session.jti} LIMIT 1
+  `)
+  const sessRow = sessRows[0]
+  if (!sessRow) return { ok: false, code: 'session-revoked' }
+  if (sessRow.revoked_at || new Date(sessRow.expires_at).getTime() < Date.now()) {
+    return { ok: false, code: 'session-revoked' }
+  }
+  return { ok: true }
+}
+
 const DEFAULT_USER_LIMIT = { limit: 120, windowMs: 60_000 }
 const DEFAULT_IP_LIMIT = { limit: 600, windowMs: 60_000 }
 
@@ -68,26 +99,9 @@ export function withAuth(handler: Handler, opts: WithAuthOptions = {}) {
       return NextResponse.json({ error: 'unauthorized', code: 'no-session' }, { status: 401 })
     }
 
-    const userRows = await db.execute<{ password_changed_at: Date; username: string }>(sql`
-      SELECT password_changed_at, username FROM users WHERE id = ${session.uid}::uuid LIMIT 1
-    `)
-    const userRow = userRows[0]
-    if (!userRow) {
-      return NextResponse.json({ error: 'unauthorized', code: 'user-missing' }, { status: 401 })
-    }
-    if (Math.floor(new Date(userRow.password_changed_at).getTime() / 1000) > session.iat) {
-      return NextResponse.json({ error: 'unauthorized', code: 'password-changed' }, { status: 401 })
-    }
-
-    const sessRows = await db.execute<{ revoked_at: Date | null; expires_at: Date }>(sql`
-      SELECT revoked_at, expires_at FROM web_sessions WHERE jti = ${session.jti} LIMIT 1
-    `)
-    const sessRow = sessRows[0]
-    if (!sessRow) {
-      return NextResponse.json({ error: 'unauthorized', code: 'session-revoked' }, { status: 401 })
-    }
-    if (sessRow.revoked_at || new Date(sessRow.expires_at).getTime() < Date.now()) {
-      return NextResponse.json({ error: 'unauthorized', code: 'session-revoked' }, { status: 401 })
+    const live = await checkSessionLive(session)
+    if (!live.ok) {
+      return NextResponse.json({ error: 'unauthorized', code: live.code }, { status: 401 })
     }
 
     // 4: CSRF (non-GET only)
